@@ -5,8 +5,10 @@ import { AlertLevel } from 'app/enums/alert-level.enum';
 import { AlertPolicy } from 'app/enums/alert-policy.enum';
 import { IxFormsModule } from 'app/modules/ix-forms/ix-forms.module';
 import { FormErrorHandlerService } from 'app/modules/ix-forms/services/form-error-handler.service';
+import { AppLoaderService } from 'app/modules/loader/app-loader.service';
 import { AlertConfigFormComponent } from 'app/pages/system/alert-config-form/alert-config-form.component';
-import { AppLoaderService, WebSocketService } from 'app/services';
+import { DialogService } from 'app/services/dialog.service';
+import { WebSocketService } from 'app/services/ws.service';
 
 describe('AlertConfigFormComponent', () => {
   let spectator: Spectator<AlertConfigFormComponent>;
@@ -74,6 +76,7 @@ describe('AlertConfigFormComponent', () => {
         mockCall('alertclasses.update'),
       ]),
       mockProvider(AppLoaderService),
+      mockProvider(DialogService),
       mockProvider(FormErrorHandlerService),
     ],
   });
@@ -83,6 +86,7 @@ describe('AlertConfigFormComponent', () => {
     ws = spectator.inject(WebSocketService);
   });
 
+  // TODO: Does not interact with the form as a user.
   it('loads current config and shows values in the form', () => {
     expect(ws.call).toHaveBeenCalledWith('alert.list_categories');
     expect(ws.call).toHaveBeenCalledWith('alertclasses.config');

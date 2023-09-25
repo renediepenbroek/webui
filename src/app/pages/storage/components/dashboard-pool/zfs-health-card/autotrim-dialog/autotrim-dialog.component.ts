@@ -8,8 +8,11 @@ import { TranslateService } from '@ngx-translate/core';
 import { OnOff } from 'app/enums/on-off.enum';
 import helptext from 'app/helptext/storage/volumes/volume-list';
 import { Pool } from 'app/interfaces/pool.interface';
+import { AppLoaderService } from 'app/modules/loader/app-loader.service';
 import { SnackbarService } from 'app/modules/snackbar/services/snackbar.service';
-import { AppLoaderService, DialogService, WebSocketService } from 'app/services';
+import { DialogService } from 'app/services/dialog.service';
+import { ErrorHandlerService } from 'app/services/error-handler.service';
+import { WebSocketService } from 'app/services/ws.service';
 
 @UntilDestroy()
 @Component({
@@ -24,6 +27,7 @@ export class AutotrimDialogComponent implements OnInit {
 
   constructor(
     private loader: AppLoaderService,
+    private errorHandler: ErrorHandlerService,
     private ws: WebSocketService,
     private dialogRef: MatDialogRef<AutotrimDialogComponent>,
     private dialogService: DialogService,
@@ -38,20 +42,18 @@ export class AutotrimDialogComponent implements OnInit {
 
   onSubmit(event: SubmitEvent): void {
     event.preventDefault();
-    this.loader.open();
     this.ws.job('pool.update', [this.pool.id, { autotrim: this.autotrimControl.value ? OnOff.On : OnOff.Off }])
-      .pipe(untilDestroyed(this))
+      .pipe(
+        this.loader.withLoader(),
+        this.errorHandler.catchError(),
+        untilDestroyed(this),
+      )
       .subscribe({
         complete: () => {
           this.snackbar.success(
             this.translate.instant('Pool options for {poolName} successfully saved.', { poolName: this.pool.name }),
           );
-          this.loader.close();
           this.dialogRef.close(true);
-        },
-        error: (error) => {
-          this.loader.close();
-          this.dialogService.errorReportMiddleware(error);
         },
       });
   }

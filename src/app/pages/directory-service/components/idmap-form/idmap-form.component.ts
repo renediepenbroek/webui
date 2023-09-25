@@ -1,9 +1,8 @@
 import {
-  ChangeDetectionStrategy, ChangeDetectorRef, Component, OnInit,
+  ChangeDetectionStrategy, ChangeDetectorRef, Component, Inject, OnInit,
 } from '@angular/core';
 import { Validators } from '@angular/forms';
 import { MatDialog } from '@angular/material/dialog';
-import { Router } from '@angular/router';
 import { FormBuilder } from '@ngneat/reactive-forms';
 import { UntilDestroy, untilDestroyed } from '@ngneat/until-destroy';
 import { TranslateService } from '@ngx-translate/core';
@@ -12,21 +11,24 @@ import { filter, switchMap } from 'rxjs/operators';
 import {
   IdmapBackend, IdmapLinkedService, IdmapName, IdmapSchemaMode, IdmapSslEncryptionMode,
 } from 'app/enums/idmap.enum';
-import { idNameArrayToOptions } from 'app/helpers/options.helper';
+import { idNameArrayToOptions } from 'app/helpers/operators/options.operators';
 import helptext from 'app/helptext/directory-service/idmap';
 import { IdmapBackendOption, IdmapBackendOptions } from 'app/interfaces/idmap-backend-options.interface';
 import { Idmap, IdmapUpdate } from 'app/interfaces/idmap.interface';
 import { Option } from 'app/interfaces/option.interface';
+import { WebsocketError } from 'app/interfaces/websocket-error.interface';
 import { EntityJobComponent } from 'app/modules/entity/entity-job/entity-job.component';
-import { EntityUtils } from 'app/modules/entity/utils';
+import { IxSlideInRef } from 'app/modules/ix-forms/components/ix-slide-in/ix-slide-in-ref';
+import { SLIDE_IN_DATA } from 'app/modules/ix-forms/components/ix-slide-in/ix-slide-in.token';
 import { FormErrorHandlerService } from 'app/modules/ix-forms/services/form-error-handler.service';
 import { IxValidatorsService } from 'app/modules/ix-forms/services/ix-validators.service';
 import { SnackbarService } from 'app/modules/snackbar/services/snackbar.service';
 import { requiredIdmapDomains } from 'app/pages/directory-service/utils/required-idmap-domains.utils';
-import {
-  DialogService, IdmapService, ValidationService, WebSocketService,
-} from 'app/services';
-import { IxSlideInService } from 'app/services/ix-slide-in.service';
+import { DialogService } from 'app/services/dialog.service';
+import { ErrorHandlerService } from 'app/services/error-handler.service';
+import { IdmapService } from 'app/services/idmap.service';
+import { greaterThanFg, rangeValidator } from 'app/services/validators';
+import { WebSocketService } from 'app/services/ws.service';
 
 const minAllowedRange = 1000;
 const maxAllowedRange = 2147483647;
@@ -35,7 +37,6 @@ const customIdmapName = 'custom' as const;
 @UntilDestroy()
 @Component({
   templateUrl: './idmap-form.component.html',
-  styleUrls: ['./idmap-form.component.scss'],
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class IdmapFormComponent implements OnInit {
@@ -53,18 +54,17 @@ export class IdmapFormComponent implements OnInit {
     idmap_backend: [IdmapBackend.Ad],
     name: [null as IdmapName | typeof customIdmapName, Validators.required],
     custom_name: ['', this.validationHelpers.validateOnCondition(
-      (control) => control.parent?.value.name === customIdmapName,
+      (control) => (control.parent?.value as { name: string })?.name === customIdmapName,
       Validators.required,
     )],
     dns_domain_name: [''],
     range_low: [null as number, [
       Validators.required,
-      this.validators.rangeValidator(minAllowedRange, maxAllowedRange),
+      rangeValidator(minAllowedRange, maxAllowedRange),
     ]],
     range_high: [null as number, [
       Validators.required,
-      this.validators.rangeValidator(minAllowedRange, maxAllowedRange),
-      this.validators.greaterThan('range_low', [this.translate.instant('Range Low')]),
+      rangeValidator(minAllowedRange, maxAllowedRange),
     ]],
     certificate: [null as number],
     schema_mode: [null as IdmapSchemaMode],
@@ -87,10 +87,17 @@ export class IdmapFormComponent implements OnInit {
     cn_realm: [''],
     ldap_domain: [''],
     sssd_compat: [false],
+  }, {
+    validators: [
+      greaterThanFg(
+        'range_high',
+        ['range_low'],
+        this.translate.instant('Value must be greater than Range Low'),
+      ),
+    ],
   });
 
   backendChoices: IdmapBackendOptions;
-  existingIdmap: Idmap;
   isLoading = false;
 
   readonly helptext = helptext;
@@ -134,11 +141,11 @@ export class IdmapFormComponent implements OnInit {
   });
 
   get isCustomName(): boolean {
-    return this.form.get('name').value === customIdmapName;
+    return this.form.controls.name.value === customIdmapName;
   }
 
   get currentBackend(): IdmapBackendOption {
-    return this.backendChoices?.[this.form.get('idmap_backend').value];
+    return this.backendChoices?.[this.form.controls.idmap_backend.value];
   }
 
   constructor(
@@ -146,26 +153,29 @@ export class IdmapFormComponent implements OnInit {
     private translate: TranslateService,
     private ws: WebSocketService,
     private validationHelpers: IxValidatorsService,
-    private validators: ValidationService,
     private idmapService: IdmapService,
     private dialogService: DialogService,
+    private errorHandler: ErrorHandlerService,
     private matDialog: MatDialog,
     private cdr: ChangeDetectorRef,
-    private errorHandler: FormErrorHandlerService,
-    private slideInService: IxSlideInService,
-    private router: Router,
+    private formErrorHandler: FormErrorHandlerService,
     private snackbar: SnackbarService,
+    private slideInRef: IxSlideInRef<IdmapFormComponent>,
+    @Inject(SLIDE_IN_DATA) private existingIdmap: Idmap,
   ) {}
 
   ngOnInit(): void {
     this.loadBackendChoices();
     this.setFormDependencies();
+
+    if (this.existingIdmap) {
+      this.setIdmapForEdit();
+    }
   }
 
-  setIdmapForEdit(idmap: Idmap): void {
-    this.existingIdmap = idmap;
+  setIdmapForEdit(): void {
     this.setEditingIdmapFormValues();
-    this.form.controls['name'].disable();
+    this.form.controls.name.disable();
   }
 
   isOptionVisible(option: keyof IdmapFormComponent['form']['value']): boolean {
@@ -203,19 +213,14 @@ export class IdmapFormComponent implements OnInit {
       .subscribe({
         next: () => {
           this.isLoading = false;
-          this.slideInService.close();
+          this.slideInRef.close();
         },
         error: (error) => {
-          this.errorHandler.handleWsFormError(error, this.form);
+          this.formErrorHandler.handleWsFormError(error, this.form);
           this.isLoading = false;
           this.cdr.markForCheck();
         },
       });
-  }
-
-  certificatesLinkClicked(): void {
-    this.slideInService.close();
-    this.router.navigate(['/', 'credentials', 'certificates']);
   }
 
   private loadBackendChoices(): void {
@@ -237,10 +242,10 @@ export class IdmapFormComponent implements OnInit {
             this.setDefaultsForBackendOptions();
           }
         },
-        error: (error) => {
+        error: (error: WebsocketError) => {
           this.isLoading = false;
           this.cdr.markForCheck();
-          new EntityUtils().handleWsError(this, error);
+          this.dialogService.error(this.errorHandler.parseWsError(error));
         },
       });
   }
@@ -300,7 +305,7 @@ export class IdmapFormComponent implements OnInit {
     return this.dialogService.confirm({
       title: helptext.idmap.clear_cache_dialog.title,
       message: helptext.idmap.clear_cache_dialog.message,
-      hideCheckBox: true,
+      hideCheckbox: true,
     }).pipe(
       switchMap((confirmed) => {
         if (!confirmed) {
@@ -336,15 +341,15 @@ export class IdmapFormComponent implements OnInit {
     } as IdmapUpdate;
 
     if (values.dns_domain_name) {
-      params['dns_domain_name'] = values.dns_domain_name;
+      params.dns_domain_name = values.dns_domain_name;
     }
 
     if (this.isCustomName) {
-      params['name'] = values.custom_name;
+      params.name = values.custom_name;
     }
 
     if (values.certificate) {
-      params['certificate'] = values.certificate;
+      params.certificate = values.certificate;
     }
 
     Object.keys(this.currentBackend.parameters).forEach((option) => {

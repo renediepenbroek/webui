@@ -1,4 +1,6 @@
 import { LinkState } from 'app/enums/network-interface.enum';
+import { ReportingQueryUnit } from 'app/enums/reporting.enum';
+import { WebsocketError } from 'app/interfaces/websocket-error.interface';
 
 export interface ReportingRealtimeUpdate {
   cpu: AllCpusUpdate;
@@ -97,32 +99,38 @@ export interface ZfsUpdate {
 
 export interface ReportingConfig {
   confirm_rrd_destroy?: boolean;
-  cpu_in_percentage: boolean;
   graph_age: number;
   graph_points: number;
-  graphite: string;
-  graphite_separateinstances: boolean;
   id: number;
 }
 
-export interface ReportingTimeFrame {
-  start: number;
-  end: number;
+export interface ReportingQueryOptions {
+  unit?: ReportingQueryUnit;
+  start?: number;
+  end?: number;
 }
 
 export type ReportingConfigUpdate = Omit<ReportingConfig, 'id'>;
 
 export type ReportingQueryParams = [
-  [ReportingParams],
-  ReportingTimeFrame,
+  [ReportingNameAndId],
+  ReportingQueryOptions,
 ];
 
-export interface ReportingParams {
+export interface ReportingNameAndId {
   name: string;
-  identifier: string;
+  identifier?: string;
 }
 
 export type ReportingAggregationKeys = 'min' | 'mean' | 'max';
+
+export type ReportingAggregationValue = (string | number)[];
+
+export interface ReportingAggregations {
+  min: ReportingAggregationValue;
+  mean: ReportingAggregationValue;
+  max: ReportingAggregationValue;
+}
 
 export interface ReportingData {
   end: number;
@@ -130,9 +138,11 @@ export interface ReportingData {
   legend: string[];
   name: string;
   start: number;
-  step: number;
-  data: number[][];
-  aggregations: {
-    [key in ReportingAggregationKeys]: string[];
-  };
+  data: number[][] | WebsocketError;
+  aggregations: ReportingAggregations;
+}
+
+export enum ReportingDatabaseError {
+  FailedExport = 22,
+  InvalidTimestamp = 206,
 }

@@ -4,7 +4,7 @@ import {
 import * as _ from 'lodash';
 import { EntityTableComponent } from 'app/modules/entity/entity-table/entity-table.component';
 import { EntityTableAction, EntityTableColumn } from 'app/modules/entity/entity-table/entity-table.interface';
-import { TaskService } from 'app/services';
+import { TaskService } from 'app/services/task.service';
 
 @Component({
   selector: 'ix-entity-table-row-details',
@@ -12,8 +12,8 @@ import { TaskService } from 'app/services';
   styleUrls: ['./entity-table-row-details.component.scss'],
 })
 export class EntityTableRowDetailsComponent implements OnInit, OnChanges {
-  @Input() config: any;
-  @Input() parent: EntityTableComponent;
+  @Input() config: Record<string, unknown>;
+  @Input() parent: EntityTableComponent<Record<string, unknown>>;
 
   columns: EntityTableColumn[] = [];
   actions: EntityTableAction[] = [];
@@ -22,27 +22,28 @@ export class EntityTableRowDetailsComponent implements OnInit, OnChanges {
     private taskService: TaskService,
   ) {}
 
-  ngOnInit(): void {
-    this.buildColumns();
-    this.actions = this.getActions();
-  }
-
   ngOnChanges(): void {
     this.buildColumns();
     this.actions = this.getActions();
   }
 
+  ngOnInit(): void {
+    this.buildColumns();
+    this.actions = this.getActions();
+  }
+
   getColumnValue(column: EntityTableColumn, isCronTime = false): unknown {
-    const val = _.get(this.config, column.prop.split('.'));
-    if (_.isEmpty(val)) {
+    const columnValue = _.get(this.config, column.prop.split('.')) as unknown;
+
+    if (!columnValue) {
       return column.emptyText || 'N/A';
     }
 
     if (isCronTime) {
-      return this.tryGetTaskCronDescription(val);
+      return this.tryGetTaskCronDescription(columnValue);
     }
 
-    return val;
+    return columnValue;
   }
 
   buildColumns(): void {
@@ -55,9 +56,9 @@ export class EntityTableRowDetailsComponent implements OnInit, OnChanges {
     return this.parent.conf.getActions ? this.parent.conf.getActions(this.config) : this.parent.getActions(this.config);
   }
 
-  private tryGetTaskCronDescription(val: string): string {
+  private tryGetTaskCronDescription(val: unknown): unknown {
     try {
-      return this.taskService.getTaskCronDescription(val, {});
+      return this.taskService.getTaskCronDescription(val as string, {});
     } catch (err: unknown) {
       console.error(err);
       return val;

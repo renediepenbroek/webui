@@ -4,8 +4,6 @@ import {
   ChangeDetectorRef,
   ViewChild,
   OnInit,
-  TemplateRef,
-  AfterViewInit,
   QueryList,
   ViewChildren,
 } from '@angular/core';
@@ -21,19 +19,20 @@ import {
   filter, map, switchMap,
 } from 'rxjs/operators';
 import { FormatDateTimePipe } from 'app/core/pipes/format-datetime.pipe';
+import { EmptyType } from 'app/enums/empty-type.enum';
 import helptext from 'app/helptext/storage/snapshots/snapshots';
 import { ConfirmOptions } from 'app/interfaces/dialog.interface';
+import { EmptyConfig } from 'app/interfaces/empty-config.interface';
 import { ZfsSnapshot } from 'app/interfaces/zfs-snapshot.interface';
-import { EmptyConfig, EmptyType } from 'app/modules/entity/entity-empty/entity-empty.component';
 import { IxCheckboxColumnComponent } from 'app/modules/ix-tables/components/ix-checkbox-column/ix-checkbox-column.component';
 import { IxDetailRowDirective } from 'app/modules/ix-tables/directives/ix-detail-row.directive';
+import { EmptyService } from 'app/modules/ix-tables/services/empty.service';
 import { SnapshotAddFormComponent } from 'app/pages/datasets/modules/snapshots/snapshot-add-form/snapshot-add-form.component';
 import { SnapshotBatchDeleteDialogComponent } from 'app/pages/datasets/modules/snapshots/snapshot-batch-delete-dialog/snapshot-batch-delete-dialog.component';
 import { snapshotPageEntered } from 'app/pages/datasets/modules/snapshots/store/snapshot.actions';
 import { selectSnapshotsTotal, selectSnapshots, selectSnapshotState } from 'app/pages/datasets/modules/snapshots/store/snapshot.selectors';
-import { DialogService } from 'app/services';
+import { DialogService } from 'app/services/dialog.service';
 import { IxSlideInService } from 'app/services/ix-slide-in.service';
-import { LayoutService } from 'app/services/layout.service';
 import { AppState } from 'app/store';
 import { snapshotExtraColumnsToggled } from 'app/store/preferences/preferences.actions';
 import { waitForPreferences } from 'app/store/preferences/preferences.selectors';
@@ -45,18 +44,25 @@ import { waitForPreferences } from 'app/store/preferences/preferences.selectors'
   changeDetection: ChangeDetectionStrategy.OnPush,
   providers: [FormatDateTimePipe],
 })
-export class SnapshotListComponent implements OnInit, AfterViewInit {
+export class SnapshotListComponent implements OnInit {
+  readonly EmptyType = EmptyType;
   isLoading$ = this.store$.select(selectSnapshotState).pipe(map((state) => state.isLoading));
-  emptyOrErrorConfig$: Observable<EmptyConfig> = combineLatest([
+  emptyType$: Observable<EmptyType> = combineLatest([
+    this.isLoading$,
     this.store$.select(selectSnapshotsTotal).pipe(map((total) => total === 0)),
     this.store$.select(selectSnapshotState).pipe(map((state) => state.error)),
   ]).pipe(
-    switchMap(([, isError]) => {
-      if (isError) {
-        return of(this.errorConfig);
+    switchMap(([isLoading, isNoData, isError]) => {
+      if (isLoading) {
+        return of(EmptyType.Loading);
       }
-
-      return of(this.emptyConfig);
+      if (isError) {
+        return of(EmptyType.Errors);
+      }
+      if (isNoData) {
+        return of(EmptyType.NoPageData);
+      }
+      return of(EmptyType.NoSearchResults);
     }),
   );
   showExtraColumns: boolean;
@@ -64,9 +70,9 @@ export class SnapshotListComponent implements OnInit, AfterViewInit {
   @ViewChildren(IxDetailRowDirective) private detailRows: QueryList<IxDetailRowDirective>;
   @ViewChild(MatSort, { static: false }) sort: MatSort;
   @ViewChild(IxCheckboxColumnComponent, { static: false }) checkboxColumn: IxCheckboxColumnComponent<ZfsSnapshot>;
-  @ViewChild('pageHeader') pageHeader: TemplateRef<unknown>;
 
-  dataSource: MatTableDataSource<ZfsSnapshot> = new MatTableDataSource([]);
+  loadingExtraColumns = false;
+  dataSource = new MatTableDataSource<ZfsSnapshot>([]);
   defaultSort: Sort = { active: 'snapshot_name', direction: 'desc' };
   emptyConfig: EmptyConfig = {
     type: EmptyType.NoPageData,
@@ -88,15 +94,19 @@ export class SnapshotListComponent implements OnInit, AfterViewInit {
   displayedColumns: string[] = this.defaultColumns;
   datasetFilter = '';
 
+  get emptyConfigService(): EmptyService {
+    return this.emptyService;
+  }
+
   constructor(
     private dialogService: DialogService,
     private translate: TranslateService,
     private cdr: ChangeDetectorRef,
     private matDialog: MatDialog,
     private store$: Store<AppState>,
-    private slideIn: IxSlideInService,
-    private layoutService: LayoutService,
+    private slideInService: IxSlideInService,
     private route: ActivatedRoute,
+    private emptyService: EmptyService,
   ) {
     this.datasetFilter = this.route.snapshot.paramMap.get('dataset') || '';
   }
@@ -105,10 +115,6 @@ export class SnapshotListComponent implements OnInit, AfterViewInit {
     this.store$.dispatch(snapshotPageEntered());
     this.getPreferences();
     this.getSnapshots();
-  }
-
-  ngAfterViewInit(): void {
-    this.layoutService.pageHeaderUpdater$.next(this.pageHeader);
   }
 
   getPreferences(): void {
@@ -145,16 +151,16 @@ export class SnapshotListComponent implements OnInit, AfterViewInit {
       return {
         title: this.translate.instant(helptext.extra_cols.title_hide),
         message: this.translate.instant(helptext.extra_cols.message_hide),
-        buttonMsg: this.translate.instant(helptext.extra_cols.button_hide),
-        hideCheckBox: true,
+        buttonText: this.translate.instant(helptext.extra_cols.button_hide),
+        hideCheckbox: true,
       };
     }
 
     return {
       title: this.translate.instant(helptext.extra_cols.title_show),
       message: this.translate.instant(helptext.extra_cols.message_show),
-      buttonMsg: this.translate.instant(helptext.extra_cols.button_show),
-      hideCheckBox: true,
+      buttonText: this.translate.instant(helptext.extra_cols.button_show),
+      hideCheckbox: true,
     };
   }
 
@@ -167,11 +173,13 @@ export class SnapshotListComponent implements OnInit, AfterViewInit {
         case 'dataset':
           return item.dataset;
         case 'used':
-          return item.properties ? item.properties.used.parsed.toString() : '';
+          return item.properties ? +item.properties.used.parsed : '';
         case 'created':
           return item.properties ? item.properties.creation.parsed.$date.toString() : '';
         case 'referenced':
-          return item.properties ? item.properties.referenced.parsed.toString() : '';
+          return item.properties ? +item.properties.referenced.parsed : '';
+        default:
+          return undefined;
       }
     };
     setTimeout(() => {
@@ -185,12 +193,24 @@ export class SnapshotListComponent implements OnInit, AfterViewInit {
   toggleExtraColumns(event: MouseEvent): void {
     event.preventDefault();
     this.dialogService.confirm(this.getConfirmOptions())
-      .pipe(filter(Boolean), untilDestroyed(this))
-      .subscribe(() => this.store$.dispatch(snapshotExtraColumnsToggled()));
+      .pipe(untilDestroyed(this))
+      .subscribe((confirmed) => {
+        if (confirmed) {
+          this.showExtraColumns = !this.showExtraColumns;
+          this.store$.dispatch(snapshotExtraColumnsToggled());
+        }
+
+        this.loadingExtraColumns = true;
+
+        setTimeout(() => {
+          this.loadingExtraColumns = false;
+          this.cdr.markForCheck();
+        });
+      });
   }
 
   doAdd(): void {
-    this.slideIn.open(SnapshotAddFormComponent);
+    this.slideInService.open(SnapshotAddFormComponent);
   }
 
   doBatchDelete(snapshots: ZfsSnapshot[]): void {

@@ -7,9 +7,11 @@ import { MatCardModule } from '@angular/material/card';
 import { MatCheckboxModule } from '@angular/material/checkbox';
 import { MatOptionModule } from '@angular/material/core';
 import { MatDialogModule } from '@angular/material/dialog';
+import { MatDividerModule } from '@angular/material/divider';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatInputModule } from '@angular/material/input';
 import { MatMenuModule } from '@angular/material/menu';
+import { MatPaginatorModule } from '@angular/material/paginator';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { MatSelectModule } from '@angular/material/select';
@@ -17,8 +19,7 @@ import { MatToolbarModule } from '@angular/material/toolbar';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { RouterModule } from '@angular/router';
 import { TranslateModule } from '@ngx-translate/core';
-import { NgxDatatableModule } from '@swimlane/ngx-datatable';
-import { ChartsModule } from 'ng2-charts';
+import { NgChartsModule } from 'ng2-charts';
 import { NgxFilesizeModule } from 'ngx-filesize';
 import { NgxSkeletonLoaderModule } from 'ngx-skeleton-loader';
 import { CoreComponents } from 'app/core/core-components.module';
@@ -31,20 +32,21 @@ import { IxFormsModule } from 'app/modules/ix-forms/ix-forms.module';
 import { IxIconModule } from 'app/modules/ix-icon/ix-icon.module';
 import { IxTableModule } from 'app/modules/ix-tables/ix-table.module';
 import { LayoutModule } from 'app/modules/layout/layout.module';
+import { AppLoaderModule } from 'app/modules/loader/app-loader.module';
+import { TestIdModule } from 'app/modules/test-id/test-id.module';
 import { TooltipModule } from 'app/modules/tooltip/tooltip.module';
+import { PoolCardIconComponent } from 'app/pages/storage/components/dashboard-pool/pool-card-icon/pool-card-icon.component';
 import { GaugeChartComponent } from 'app/pages/storage/components/dashboard-pool/pool-usage-card/gauge-chart/gauge-chart.component';
 import { PoolUsageCardComponent } from 'app/pages/storage/components/dashboard-pool/pool-usage-card/pool-usage-card.component';
 import { TopologyCardComponent } from 'app/pages/storage/components/dashboard-pool/topology-card/topology-card.component';
 import { ImportPoolComponent } from 'app/pages/storage/components/import-pool/import-pool.component';
-import { ExportedPoolsDialogComponent } from 'app/pages/storage/components/manager/exported-pools-dialog/exported-pools-dialog.component';
-import { ManagerComponent } from 'app/pages/storage/components/manager/manager.component';
-import { VdevComponent } from 'app/pages/storage/components/manager/vdev/vdev.component';
 import { PoolsDashboardComponent } from 'app/pages/storage/components/pools-dashboard/pools-dashboard.component';
 import {
   ManageUnusedDiskDialogComponent,
 } from 'app/pages/storage/components/unused-resources/unused-disk-card/manage-unused-disk-dialog/manage-unused-disk-dialog.component';
 import { UnusedDiskCardComponent } from 'app/pages/storage/components/unused-resources/unused-disk-card/unused-disk-card.component';
 import { UnusedResourcesComponent } from 'app/pages/storage/components/unused-resources/unused-resources.component';
+import { PoolManagerModule } from 'app/pages/storage/modules/pool-manager/pool-manager.module';
 import { routing } from 'app/pages/storage/storage.routing';
 import { PoolsDashboardStore } from 'app/pages/storage/stores/pools-dashboard-store.service';
 import { DashboardPoolComponent } from './components/dashboard-pool/dashboard-pool.component';
@@ -55,6 +57,7 @@ import { ZfsHealthCardComponent } from './components/dashboard-pool/zfs-health-c
 
 @NgModule({
   imports: [
+    PoolManagerModule,
     routing,
     IxTableModule,
     IxFormsModule,
@@ -65,14 +68,14 @@ import { ZfsHealthCardComponent } from './components/dashboard-pool/zfs-health-c
     MatButtonModule,
     RouterModule,
     CommonModule,
+    MatPaginatorModule,
     IxIconModule,
     MatProgressSpinnerModule,
     MatToolbarModule,
-    ChartsModule,
+    NgChartsModule,
     FlexLayoutModule,
     ReactiveFormsModule,
     LayoutModule,
-    NgxDatatableModule,
     MatFormFieldModule,
     MatOptionModule,
     TooltipModule,
@@ -80,6 +83,7 @@ import { ZfsHealthCardComponent } from './components/dashboard-pool/zfs-health-c
     MatCheckboxModule,
     MatSelectModule,
     MatMenuModule,
+    MatDividerModule,
     MatDialogModule,
     CastModule,
     MatInputModule,
@@ -90,6 +94,8 @@ import { ZfsHealthCardComponent } from './components/dashboard-pool/zfs-health-c
     LayoutModule,
     EntityModule,
     NgxFilesizeModule,
+    TestIdModule,
+    AppLoaderModule,
   ],
   declarations: [
     PoolsDashboardComponent,
@@ -97,9 +103,6 @@ import { ZfsHealthCardComponent } from './components/dashboard-pool/zfs-health-c
     GaugeChartComponent,
     TopologyCardComponent,
     ImportPoolComponent,
-    VdevComponent,
-    ManagerComponent,
-    ExportedPoolsDialogComponent,
     ManageUnusedDiskDialogComponent,
     ZfsHealthCardComponent,
     UnusedDiskCardComponent,
@@ -108,6 +111,7 @@ import { ZfsHealthCardComponent } from './components/dashboard-pool/zfs-health-c
     ExportDisconnectModalComponent,
     DiskHealthCardComponent,
     AutotrimDialogComponent,
+    PoolCardIconComponent,
   ],
   providers: [
     FormatDateTimePipe,

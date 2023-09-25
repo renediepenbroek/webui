@@ -1,27 +1,27 @@
 import {
-  Component, AfterViewInit, Input, ElementRef, OnChanges,
+  Component, AfterViewInit, ElementRef, ChangeDetectionStrategy, ChangeDetectorRef,
 } from '@angular/core';
 import { MediaObserver } from '@angular/flex-layout';
 import { UntilDestroy, untilDestroyed } from '@ngneat/until-destroy';
 import { Store } from '@ngrx/store';
 import { TranslateService } from '@ngx-translate/core';
-import { UUID } from 'angular2-uuid';
 import {
-  Chart, ChartData, ChartDataSets, ChartOptions, ChartTooltipItem, InteractionMode,
+  Chart, ChartDataset, ChartOptions, ChartEvent,
 } from 'chart.js';
+import { ActiveElement } from 'chart.js/dist/types';
 import * as d3 from 'd3';
-import { Subject, Subscription } from 'rxjs';
 import {
-  filter, map, throttleTime,
+  filter, throttleTime,
 } from 'rxjs/operators';
 import { ThemeUtils } from 'app/core/classes/theme-utils/theme-utils';
 import { ScreenType } from 'app/enums/screen-type.enum';
-import { CoreEvent } from 'app/interfaces/events';
 import { AllCpusUpdate } from 'app/interfaces/reporting.interface';
 import { Theme } from 'app/interfaces/theme.interface';
 import { GaugeConfig, GaugeData } from 'app/modules/charts/components/view-chart-gauge/view-chart-gauge.component';
 import { WidgetComponent } from 'app/pages/dashboard/components/widget/widget.component';
 import { WidgetCpuData } from 'app/pages/dashboard/interfaces/widget-data.interface';
+import { ResourcesUsageStore } from 'app/pages/dashboard/store/resources-usage-store.service';
+import { deepCloneState } from 'app/pages/dashboard/utils/deep-clone-state.helper';
 import { ThemeService } from 'app/services/theme/theme.service';
 import { AppState } from 'app/store';
 import { selectTheme } from 'app/store/preferences/preferences.selectors';
@@ -35,26 +35,22 @@ import { waitForSystemInfo } from 'app/store/system-info/system-info.selectors';
     '../widget/widget.component.scss',
     './widget-cpu.component.scss',
   ],
+  changeDetection: ChangeDetectionStrategy.OnPush,
 })
-export class WidgetCpuComponent extends WidgetComponent implements AfterViewInit, OnChanges {
-  @Input() data: Subject<CoreEvent>;
-  @Input() cpuModel: string;
+export class WidgetCpuComponent extends WidgetComponent implements AfterViewInit {
+  cpuModel: string;
 
-  chart: any;// Chart.js instance with per core data
+  chart: Chart; // Chart.js instance with per core data
   ctx: CanvasRenderingContext2D; // canvas context for chart.js
   cpuAvg: GaugeConfig;
-  title: string = this.translate.instant('CPU');
   subtitle: string = this.translate.instant('% of all cores');
-  configurable = false;
-  chartId = UUID.UUID();
   coreCount: number;
   threadCount: number;
   hyperthread: boolean;
-  legendData: ChartDataSets[];
+  legendData: ChartDataset[];
   screenType = ScreenType.Desktop;
 
   // Mobile Stats
-  tempAvailable = false;
   tempMax: number;
   tempMaxThreads: number[] = [];
   tempMin: number;
@@ -69,21 +65,12 @@ export class WidgetCpuComponent extends WidgetComponent implements AfterViewInit
 
   labels: string[] = [];
   isCpuAvgReady = false;
+  cpuData: WidgetCpuData;
 
   readonly ScreenType = ScreenType;
 
-  private _cpuData: WidgetCpuData;
   protected currentTheme: Theme;
   private utils: ThemeUtils;
-  private dataSubscription: Subscription;
-
-  get cpuData(): WidgetCpuData {
-    return this._cpuData;
-  }
-
-  set cpuData(value) {
-    this._cpuData = value;
-  }
 
   constructor(
     public translate: TranslateService,
@@ -91,51 +78,49 @@ export class WidgetCpuComponent extends WidgetComponent implements AfterViewInit
     private el: ElementRef<HTMLElement>,
     public themeService: ThemeService,
     private store$: Store<AppState>,
+    private resourcesUsageStore$: ResourcesUsageStore,
+    private cdr: ChangeDetectorRef,
   ) {
     super(translate);
 
     this.utils = new ThemeUtils();
 
-    mediaObserver.media$.pipe(untilDestroyed(this)).subscribe((evt) => {
+    this.resourcesUsageStore$.cpuUsage$.pipe(
+      throttleTime(500),
+      deepCloneState(),
+      untilDestroyed(this),
+    ).subscribe({
+      next: (cpuData) => {
+        if (!cpuData?.average) {
+          return;
+        }
+
+        this.setCpuLoadData(['Load', parseInt(cpuData.average.usage.toFixed(1))]);
+        this.setCpuData(cpuData);
+        this.cdr.markForCheck();
+      },
+    });
+
+    mediaObserver.asObservable().pipe(untilDestroyed(this)).subscribe((changes) => {
       const size = {
-        width: evt.mqAlias === 'xs' ? 320 : 536,
+        width: changes[0].mqAlias === 'xs' ? 320 : 536,
         height: 140,
       };
 
-      const currentScreenType = evt.mqAlias === 'xs' ? ScreenType.Mobile : ScreenType.Desktop;
+      const currentScreenType = changes[0].mqAlias === 'xs' ? ScreenType.Mobile : ScreenType.Desktop;
 
       if (this.chart && this.screenType !== currentScreenType) {
-        this.chart.resize(size);
+        this.chart.resize(size.width, size.height);
       }
 
       this.screenType = currentScreenType;
     });
 
     this.store$.pipe(waitForSystemInfo, untilDestroyed(this)).subscribe((sysInfo) => {
+      this.cpuModel = sysInfo.model;
       this.threadCount = sysInfo.cores;
       this.coreCount = sysInfo.physical_cores;
       this.hyperthread = this.threadCount !== this.coreCount;
-    });
-  }
-
-  ngOnChanges(): void {
-    if (!this.data) {
-      return;
-    }
-
-    this.dataSubscription?.unsubscribe();
-    this.data.pipe(
-      filter((evt) => evt.name === 'CpuStats'),
-      map((evt) => evt.data),
-      throttleTime(500),
-      untilDestroyed(this),
-    ).subscribe((cpuData: AllCpusUpdate) => {
-      if (!cpuData.average) {
-        return;
-      }
-
-      this.setCpuLoadData(['Load', parseInt(cpuData.average.usage.toFixed(1))]);
-      this.setCpuData(cpuData);
     });
   }
 
@@ -150,7 +135,6 @@ export class WidgetCpuComponent extends WidgetComponent implements AfterViewInit
   }
 
   parseCpuData(cpuData: AllCpusUpdate): GaugeData[] {
-    this.tempAvailable = Boolean(cpuData.temperature && Object.keys(cpuData.temperature).length > 0);
     const usageColumn: GaugeData = ['Usage'];
     let temperatureColumn: GaugeData = ['Temperature'];
     const temperatureValues = [];
@@ -165,10 +149,10 @@ export class WidgetCpuComponent extends WidgetComponent implements AfterViewInit
       const mod = threads.length % 2;
       const temperatureIndex = this.hyperthread ? Math.floor(i / 2 - mod) : i;
 
-      if (cpuData.temperature && cpuData.temperature[temperatureIndex] && !cpuData.temperature_celsius) {
+      if (cpuData.temperature?.[temperatureIndex] && !cpuData.temperature_celsius) {
         const temperatureAsCelsius = (cpuData.temperature[temperatureIndex] / 10 - 273.05).toFixed(0);
         temperatureValues.push(parseInt(temperatureAsCelsius));
-      } else if (cpuData.temperature_celsius && cpuData.temperature_celsius[temperatureIndex]) {
+      } else if (cpuData.temperature_celsius?.[temperatureIndex]) {
         temperatureValues.push(cpuData.temperature_celsius[temperatureIndex].toFixed(0));
       }
     }
@@ -249,70 +233,64 @@ export class WidgetCpuComponent extends WidgetComponent implements AfterViewInit
       const ds = this.makeDatasets(this.cpuData.data);
       this.ctx = el.getContext('2d');
 
-      const data = {
+      const chartData = {
         labels: this.labels,
         datasets: ds,
       };
 
-      const options: ChartOptions = {
+      const options: ChartOptions<'bar'> = {
         events: ['mousemove', 'mouseout'],
-        onHover: (event: MouseEvent) => {
-          if (event.type === 'mouseout') {
+        onHover: (event: ChartEvent, elements: ActiveElement[], chart: Chart) => {
+          if (event.type === 'mouseout' || this.screenType === ScreenType.Mobile) {
             this.legendData = null;
             this.legendIndex = null;
+            return;
+          }
+
+          if (elements.length > 0) {
+            this.legendData = chart.data.datasets;
+            this.legendIndex = elements[0].index;
           }
         },
-        tooltips: {
-          enabled: false,
-          mode: 'nearest' as InteractionMode,
-          intersect: true,
-          callbacks: {
-            label: (tt: ChartTooltipItem, data: ChartData) => {
-              if (this.screenType === ScreenType.Mobile) {
-                this.legendData = null;
-                this.legendIndex = null;
-                return;
-              }
-
-              this.legendData = data.datasets;
-              this.legendIndex = tt.index;
-
-              return '';
-            },
-          },
-          custom: () => {},
+        interaction: {
+          intersect: false,
         },
         responsive: true,
         maintainAspectRatio: false,
-        legend: {
-          display: false,
+        plugins: {
+          legend: {
+            display: false,
+          },
+          tooltip: {
+            enabled: false,
+          },
         },
-        responsiveAnimationDuration: 0,
         animation: {
           duration: 1000,
-          animateRotate: true,
-          animateScale: true,
         },
-        hover: {
-          animationDuration: 0,
+        transitions: {
+          active: {
+            animation: {
+              duration: 0,
+            },
+          },
         },
         scales: {
-          xAxes: [{
+          x: {
             type: 'category',
             labels: this.labels,
-          } as any],
-          yAxes: [{
-            ticks: {
-              max: 100,
-              beginAtZero: true,
-            },
-          }],
+          },
+          y: {
+            type: 'linear',
+            max: 100,
+            beginAtZero: true,
+          },
         },
       };
 
       this.chart = new Chart(this.ctx, {
         type: 'bar',
-        data,
+        data: chartData,
         options,
       });
     } else {
@@ -329,8 +307,8 @@ export class WidgetCpuComponent extends WidgetComponent implements AfterViewInit
     this.renderChart();
   }
 
-  protected makeDatasets(data: GaugeData[]): ChartDataSets[] {
-    const datasets: ChartDataSets[] = [];
+  protected makeDatasets(data: GaugeData[]): ChartDataset[] {
+    const datasets: ChartDataset[] = [];
     const labels: string[] = [];
     for (let i = 0; i < this.threadCount; i++) {
       labels.push((i).toString());
@@ -339,7 +317,7 @@ export class WidgetCpuComponent extends WidgetComponent implements AfterViewInit
 
     // Create the data...
     data.forEach((item, index) => {
-      const ds: ChartDataSets = {
+      const ds: ChartDataset = {
         label: item[0] as string,
         data: data[index].slice(1) as number[],
         backgroundColor: '',
@@ -381,8 +359,6 @@ export class WidgetCpuComponent extends WidgetComponent implements AfterViewInit
     const rgb = valueType === 'hex' ? this.utils.hexToRgb(txtColor).rgb : this.utils.rgbToArray(txtColor);
 
     // return rgba
-    const rgba = `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${opacity})`;
-
-    return rgba;
+    return `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${opacity})`;
   }
 }

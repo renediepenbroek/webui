@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, Inject } from '@angular/core';
-import { FormBuilder } from '@angular/forms';
+import { FormBuilder, Validators } from '@angular/forms';
 import { MAT_DIALOG_DATA, MatDialog, MatDialogRef } from '@angular/material/dialog';
 import { UntilDestroy, untilDestroyed } from '@ngneat/until-destroy';
 import { TranslateService } from '@ngx-translate/core';
@@ -8,7 +8,8 @@ import { filter } from 'rxjs/operators';
 import { DiskWipeMethod } from 'app/enums/disk-wipe-method.enum';
 import helptext from 'app/helptext/storage/disks/disks';
 import { EntityJobComponent } from 'app/modules/entity/entity-job/entity-job.component';
-import { DialogService } from 'app/services';
+import { DialogService } from 'app/services/dialog.service';
+import { ErrorHandlerService } from 'app/services/error-handler.service';
 
 @UntilDestroy()
 @Component({
@@ -18,7 +19,7 @@ import { DialogService } from 'app/services';
 })
 export class DiskWipeDialogComponent {
   form = this.formBuilder.group({
-    wipe_method: [DiskWipeMethod.Quick],
+    wipe_method: [DiskWipeMethod.Quick, [Validators.required]],
   });
 
   readonly tooltips = {
@@ -42,6 +43,7 @@ export class DiskWipeDialogComponent {
     private formBuilder: FormBuilder,
     private dialogService: DialogService,
     private translate: TranslateService,
+    private errorHandler: ErrorHandlerService,
     private matDialog: MatDialog,
     private dialogRef: MatDialogRef<DiskWipeDialogComponent>,
     @Inject(MAT_DIALOG_DATA) public data: { diskName: string; exportedPool: string },
@@ -84,9 +86,6 @@ export class DiskWipeDialogComponent {
           message: helptext.diskWipeDialogForm.infoContent,
           hideCancel: true,
         });
-      },
-      error: (error) => {
-        this.dialogService.errorReportMiddleware(error);
       },
     });
 

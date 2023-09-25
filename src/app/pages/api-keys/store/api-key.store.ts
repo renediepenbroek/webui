@@ -5,8 +5,10 @@ import {
   catchError, switchMap, tap,
 } from 'rxjs/operators';
 import { ApiKey } from 'app/interfaces/api-key.interface';
-import { EntityUtils } from 'app/modules/entity/utils';
-import { DialogService, WebSocketService } from 'app/services';
+import { WebsocketError } from 'app/interfaces/websocket-error.interface';
+import { DialogService } from 'app/services/dialog.service';
+import { ErrorHandlerService } from 'app/services/error-handler.service';
+import { WebSocketService } from 'app/services/ws.service';
 
 export interface ApiKeysState {
   isLoading: boolean;
@@ -24,6 +26,7 @@ const initialState: ApiKeysState = {
 export class ApiKeyComponentStore extends ComponentStore<ApiKeysState> {
   constructor(
     private ws: WebSocketService,
+    private errorHandler: ErrorHandlerService,
     private dialog: DialogService,
   ) {
     super(initialState);
@@ -48,9 +51,8 @@ export class ApiKeyComponentStore extends ComponentStore<ApiKeysState> {
               entities: keys,
             });
           }),
-          catchError((error) => {
-            new EntityUtils().errorReport(error, this.dialog);
-
+          catchError((error: WebsocketError) => {
+            this.dialog.error(this.errorHandler.parseWsError(error));
             this.patchState({
               isLoading: false,
               error: 'API Keys could not be loaded',

@@ -4,16 +4,19 @@ import {
 import { FormControl, FormGroup, Validators } from '@angular/forms';
 import { MAT_DIALOG_DATA, MatDialogRef } from '@angular/material/dialog';
 import { UntilDestroy, untilDestroyed } from '@ngneat/until-destroy';
-import { Observable, of } from 'rxjs';
+import { of } from 'rxjs';
 import helptext from 'app/helptext/storage/volumes/datasets/dataset-acl';
 import { AclTemplateByPath } from 'app/interfaces/acl.interface';
 import { Option } from 'app/interfaces/option.interface';
 import { IxValidatorsService } from 'app/modules/ix-forms/services/ix-validators.service';
+import { AppLoaderService } from 'app/modules/loader/app-loader.service';
 import {
   SelectPresetModalConfig,
 } from 'app/pages/datasets/modules/permissions/interfaces/select-preset-modal-config.interface';
 import { DatasetAclEditorStore } from 'app/pages/datasets/modules/permissions/stores/dataset-acl-editor.store';
-import { AppLoaderService, DialogService, WebSocketService } from 'app/services';
+import { DialogService } from 'app/services/dialog.service';
+import { ErrorHandlerService } from 'app/services/error-handler.service';
+import { WebSocketService } from 'app/services/ws.service';
 
 @UntilDestroy()
 @Component({
@@ -24,13 +27,13 @@ import { AppLoaderService, DialogService, WebSocketService } from 'app/services'
 export class SelectPresetModalComponent implements OnInit {
   form = new FormGroup({
     presetName: new FormControl('', this.validatorsService.validateOnCondition(
-      (control) => control.parent && control.parent.get('usePreset').value,
+      (control) => control.parent?.get('usePreset')?.value,
       Validators.required,
     )),
     usePreset: new FormControl(true),
   });
 
-  presetOptions$: Observable<Option[]> = of([]);
+  presetOptions$ = of<Option[]>([]);
   presets: AclTemplateByPath[] = [];
 
   readonly usePresetOptions$ = of([
@@ -50,6 +53,7 @@ export class SelectPresetModalComponent implements OnInit {
   constructor(
     private dialogRef: MatDialogRef<SelectPresetModalComponent>,
     private ws: WebSocketService,
+    private errorHandler: ErrorHandlerService,
     private loader: AppLoaderService,
     private aclEditorStore: DatasetAclEditorStore,
     private dialogService: DialogService,
@@ -63,13 +67,12 @@ export class SelectPresetModalComponent implements OnInit {
   }
 
   private setFormRelations(): void {
-    this.form.get('usePreset').valueChanges.pipe(untilDestroyed(this)).subscribe(() => {
-      this.form.get('presetName').updateValueAndValidity();
+    this.form.controls.usePreset.valueChanges.pipe(untilDestroyed(this)).subscribe(() => {
+      this.form.controls.presetName.updateValueAndValidity();
     });
   }
 
   private loadOptions(): void {
-    this.loader.open();
     this.ws.call('filesystem.acltemplate.by_path', [{
       path: this.data.datasetPath,
       'format-options': {
@@ -77,20 +80,17 @@ export class SelectPresetModalComponent implements OnInit {
         resolve_names: true,
       },
     }])
-      .pipe(untilDestroyed(this))
-      .subscribe({
-        next: (presets) => {
-          this.presets = presets;
-          this.presetOptions$ = of(presets.map((preset) => ({
-            label: preset.name,
-            value: preset.name,
-          })));
-          this.loader.close();
-        },
-        error: (error) => {
-          this.loader.close();
-          this.dialogService.errorReportMiddleware(error);
-        },
+      .pipe(
+        this.loader.withLoader(),
+        this.errorHandler.catchError(),
+        untilDestroyed(this),
+      )
+      .subscribe((presets) => {
+        this.presets = presets;
+        this.presetOptions$ = of(presets.map((preset) => ({
+          label: preset.name,
+          value: preset.name,
+        })));
       });
   }
 

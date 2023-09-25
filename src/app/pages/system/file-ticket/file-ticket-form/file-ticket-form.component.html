@@ -3,7 +3,7 @@
   [loading]="isFormLoading$ | async"
 ></ix-modal-header>
 
-<div class="ix-modal-subheader" *ngFor="let job$ of jobs$ | async">
+<div *ngFor="let job$ of jobs$ | async" class="ix-modal-subheader">
   <ix-job-item *ngIf="job$ | async as job" [job]="job"></ix-job-item>
 </div>
 
@@ -11,6 +11,12 @@
   <mat-card-content>
     <form class="ix-form-container" [formGroup]="form" (submit)="onSubmit()">
       <ix-fieldset>
+
+        <div *ngIf="!(isEnterprise$ | async)" class="link">
+          <a href="https://www.truenas.com/community/" ixTest="['forum-link']">
+            {{ 'TrueNAS Forums - Discuss with fellow TrueNAS community users' | translate }}
+          </a>
+        </div>
         <ix-jira-oauth
           formControlName="token"
           [label]="'Token' | translate"
@@ -66,16 +72,17 @@
         ></ix-file-input>
       </ix-fieldset>
 
-      <div class="form-actions">
+      <ix-form-actions>
         <button
           mat-button
           type="submit"
           color="primary"
+          ixTest="save"
           [disabled]="isFormDisabled$ | async"
         >
           {{ 'Save' | translate }}
         </button>
-      </div>
+      </ix-form-actions>
     </form>
   </mat-card-content>
 </mat-card>

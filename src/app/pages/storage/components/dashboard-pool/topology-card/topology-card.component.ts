@@ -2,15 +2,25 @@ import {
   Component, Input, OnChanges, OnInit,
 } from '@angular/core';
 import { Router } from '@angular/router';
+import { marker as T } from '@biesbjerg/ngx-translate-extract-marker';
 import { UntilDestroy } from '@ngneat/until-destroy';
 import { TranslateService } from '@ngx-translate/core';
+import filesize from 'filesize';
+import { PoolCardIconType } from 'app/enums/pool-card-icon-type.enum';
 import { PoolStatus } from 'app/enums/pool-status.enum';
+import { VdevType } from 'app/enums/v-dev-type.enum';
 import { Pool, PoolTopology } from 'app/interfaces/pool.interface';
-import { StorageDashboardDisk, TopologyDisk, TopologyItem } from 'app/interfaces/storage.interface';
-import { WidgetUtils } from 'app/pages/dashboard/utils/widget-utils';
+import { SmartTestResult } from 'app/interfaces/smart-test.interface';
+import {
+  Disk,
+  EnclosureAndSlot,
+  StorageDashboardDisk,
+  TopologyDisk,
+  TopologyItem,
+} from 'app/interfaces/storage.interface';
+import { StorageService } from 'app/services/storage.service';
 
 interface TopologyState {
-  health: TopologyHealthLevel;
   data: string;
   metadata: string;
   log: string;
@@ -19,14 +29,11 @@ interface TopologyState {
   dedup: string;
 }
 
-export enum TopologyHealthLevel {
-  Warn = 'warn',
-  Error = 'error',
-  Safe = 'safe',
+export interface EmptyDiskObject {
+  [p: string]: string | number | boolean | string[] | SmartTestResult[] | EnclosureAndSlot;
 }
 
-const notAssignedDev = 'VDEVs not assigned';
-const mixedDev = 'Mixed Capacity VDEVs';
+const notAssignedDev = T('VDEVs not assigned');
 
 @UntilDestroy()
 @Component({
@@ -37,11 +44,8 @@ const mixedDev = 'Mixed Capacity VDEVs';
 export class TopologyCardComponent implements OnInit, OnChanges {
   @Input() poolState: Pool;
   @Input() disks: StorageDashboardDisk[];
-  readonly topologyHealthLevel = TopologyHealthLevel;
-  private utils: WidgetUtils;
 
   topologyState: TopologyState = {
-    health: TopologyHealthLevel.Safe,
     data: notAssignedDev,
     metadata: notAssignedDev,
     log: notAssignedDev,
@@ -50,37 +54,44 @@ export class TopologyCardComponent implements OnInit, OnChanges {
     dedup: notAssignedDev,
   };
 
-  get mixedDev(): string {
-    return mixedDev;
+  topologyWarningsState: TopologyState = { ...this.topologyState };
+
+  get iconType(): PoolCardIconType {
+    if (this.isStatusError(this.poolState)) {
+      return PoolCardIconType.Error;
+    }
+    if (this.isStatusWarning(this.poolState) || !this.poolState.healthy) {
+      return PoolCardIconType.Warn;
+    }
+    return PoolCardIconType.Safe;
+  }
+
+  get iconTooltip(): string {
+    if (this.isStatusError(this.poolState) || this.isStatusWarning(this.poolState)) {
+      return this.translate.instant('Pool contains {status} Data VDEVs', { status: this.poolState.status });
+    }
+    if (!this.poolState.healthy) {
+      return this.translate.instant('Pool is not healthy');
+    }
+    return this.translate.instant('Everything is fine');
+  }
+
+  get isDraidLayoutDataVdevs(): boolean {
+    return /\bDRAID\b/.test(this.topologyState.data);
   }
 
   constructor(
     public router: Router,
     public translate: TranslateService,
-  ) {
-    this.utils = new WidgetUtils();
-  }
+    public storageService: StorageService,
+  ) {}
 
-  ngOnInit(): void {
-    this.checkVolumeHealth(this.poolState);
+  ngOnChanges(): void {
     this.parseTopology(this.poolState.topology);
   }
 
-  ngOnChanges(): void {
-    this.ngOnInit();
-  }
-
-  private checkVolumeHealth(poolState: Pool): void {
-    const isError = this.isStatusError(poolState);
-    const isWarning = this.isStatusWarning(poolState);
-
-    if (isError) {
-      this.topologyState.health = TopologyHealthLevel.Error;
-    } else if (isWarning || !poolState.healthy) {
-      this.topologyState.health = TopologyHealthLevel.Warn;
-    } else {
-      this.topologyState.health = TopologyHealthLevel.Safe;
-    }
+  ngOnInit(): void {
+    this.parseTopology(this.poolState.topology);
   }
 
   parseTopology(topology: PoolTopology): void {
@@ -88,47 +99,76 @@ export class TopologyCardComponent implements OnInit, OnChanges {
       return;
     }
 
-    this.topologyState.data = this.parseDevs(topology.data);
-    this.topologyState.metadata = this.parseDevs(topology.special);
-    this.topologyState.log = this.parseDevs(topology.log);
-    this.topologyState.cache = this.parseDevs(topology.cache);
-    this.topologyState.spare = this.parseDevs(topology.spare);
-    this.topologyState.dedup = this.parseDevs(topology.dedup);
+    this.topologyState.data = this.parseDevs(topology.data, VdevType.Data);
+    this.topologyState.log = this.parseDevs(topology.log, VdevType.Log);
+    this.topologyState.cache = this.parseDevs(topology.cache, VdevType.Cache);
+    this.topologyState.spare = this.parseDevs(topology.spare, VdevType.Spare);
+    this.topologyState.metadata = this.parseDevs(topology.special, VdevType.Special);
+    this.topologyState.dedup = this.parseDevs(topology.dedup, VdevType.Dedup);
+
+    this.topologyWarningsState.data = this.parseDevsWarnings(topology.data, VdevType.Data);
+    this.topologyWarningsState.log = this.parseDevsWarnings(topology.log, VdevType.Log);
+    this.topologyWarningsState.cache = this.parseDevsWarnings(topology.cache, VdevType.Cache);
+    this.topologyWarningsState.spare = this.parseDevsWarnings(topology.spare, VdevType.Spare);
+    this.topologyWarningsState.metadata = this.parseDevsWarnings(topology.special, VdevType.Special, topology.data);
+    this.topologyWarningsState.dedup = this.parseDevsWarnings(topology.dedup, VdevType.Dedup, topology.data);
   }
 
-  private parseDevs(devs: TopologyItem[]): string {
-    let outputString = notAssignedDev;
-    let isMix = false;
-    let wide = 0;
-    const type = devs[0]?.type;
-    const size = devs[0]?.children.length
-      ? this.disks.find((disk) => disk.name === devs[0]?.children[0]?.disk)?.size
-      : this.disks.find((disk) => disk.name === (devs[0] as TopologyDisk)?.disk)?.size;
+  private parseDevs(vdevs: TopologyItem[], category: VdevType): string {
+    let outputString = vdevs.length ? '' : notAssignedDev;
 
-    devs.forEach((dev) => {
-      if (dev.type && dev.type !== type) {
-        isMix = true;
-      }
-      if (!dev.children.length && this.disks.find((disk) => disk.name === (dev as TopologyDisk).disk)?.size !== size) {
-        isMix = true;
-      }
-      dev.children.forEach((child) => {
-        wide += 1;
-        if (this.disks.find((disk) => disk.name === child.disk)?.size !== size) {
-          isMix = true;
-        }
-      });
+    // Check VDEV Widths
+    let vdevWidth = 0;
+
+    // There should only be one value
+    const allVdevWidths: Set<number> = this.storageService.getVdevWidths(vdevs);
+    const isMixedWidth = this.storageService.isMixedWidth(allVdevWidths);
+    let isSingleDeviceCategory = false;
+
+    switch (category) {
+      case VdevType.Spare:
+      case VdevType.Cache:
+        isSingleDeviceCategory = true;
+    }
+
+    if (!isMixedWidth && !isSingleDeviceCategory) {
+      vdevWidth = Array.from(allVdevWidths.values())[0];
+    }
+
+    if (outputString && outputString === notAssignedDev) {
+      return outputString;
+    }
+
+    const type = vdevs[0]?.type;
+    const size = vdevs[0]?.children.length
+      ? this.disks?.find((disk) => disk.name === vdevs[0]?.children[0]?.disk)?.size
+      : this.disks?.find((disk) => disk.name === (vdevs[0] as TopologyDisk)?.disk)?.size;
+
+    outputString = `${vdevs.length} x `;
+    if (vdevWidth) {
+      outputString += this.translate.instant('{type} | {vdevWidth} wide | ', { type, vdevWidth });
+    }
+
+    if (size) {
+      outputString += filesize(size, { standard: 'iec' });
+    } else {
+      outputString += '?';
+    }
+
+    return outputString;
+  }
+
+  private parseDevsWarnings(vdevs: TopologyItem[], category: VdevType, dataVdevs?: TopologyItem[]): string {
+    let outputString = '';
+    const disks: Disk[] = this.disks.map((disk: StorageDashboardDisk) => {
+      return this.dashboardDiskToDisk(disk);
     });
-
-    if (devs.length) {
-      if (isMix) {
-        outputString = mixedDev;
-      } else {
-        outputString = `${devs.length} x `;
-        outputString += wide ? `${type} | ${wide} wide | ` : '';
-        outputString += this.utils.convert(size).value;
-        outputString += this.utils.convert(size).units;
-      }
+    const warnings = this.storageService.validateVdevs(category, vdevs, disks, dataVdevs);
+    if (warnings.length === 1) {
+      outputString = warnings[0];
+    }
+    if (warnings.length > 1) {
+      outputString = warnings.join(', ');
     }
     return outputString;
   }
@@ -148,5 +188,24 @@ export class TopologyCardComponent implements OnInit, OnChanges {
       PoolStatus.Offline,
       PoolStatus.Degraded,
     ].includes(poolState.status);
+  }
+
+  dashboardDiskToDisk(dashDisk: StorageDashboardDisk): Disk {
+    const output: EmptyDiskObject | Disk = {};
+    const keys: string[] = Object.keys(dashDisk);
+    keys.forEach((key: keyof StorageDashboardDisk) => {
+      if (
+        key === 'alerts'
+        || key === 'smartTestsRunning'
+        || key === 'smartTestsFailed'
+        || key === 'tempAggregates'
+      ) {
+        return;
+      }
+
+      output[key as keyof Disk] = dashDisk[key];
+    });
+
+    return output as unknown as Disk;
   }
 }

@@ -7,10 +7,11 @@ import { marker as T } from '@biesbjerg/ngx-translate-extract-marker';
 import { UntilDestroy, untilDestroyed } from '@ngneat/until-destroy';
 import { TranslateService } from '@ngx-translate/core';
 import { Group } from 'app/interfaces/group.interface';
-import { EntityUtils } from 'app/modules/entity/utils';
 import { AppLoaderService } from 'app/modules/loader/app-loader.service';
 import { SnackbarService } from 'app/modules/snackbar/services/snackbar.service';
-import { DialogService, WebSocketService } from 'app/services';
+import { DialogService } from 'app/services/dialog.service';
+import { ErrorHandlerService } from 'app/services/error-handler.service';
+import { WebSocketService } from 'app/services/ws.service';
 
 @UntilDestroy()
 @Component({
@@ -31,6 +32,7 @@ export class DeleteGroupDialogComponent {
     private dialogService: DialogService,
     private dialogRef: MatDialogRef<DeleteGroupDialogComponent>,
     @Inject(MAT_DIALOG_DATA) public group: Group,
+    private errorHandler: ErrorHandlerService,
   ) { }
 
   get deleteUsersMessage(): string {
@@ -41,19 +43,15 @@ export class DeleteGroupDialogComponent {
   }
 
   onDelete(): void {
-    this.loader.open();
     this.ws.call('group.delete', [this.group.id, { delete_users: this.deleteUsersCheckbox.value }])
-      .pipe(untilDestroyed(this))
-      .subscribe({
-        next: () => {
-          this.snackbar.success(this.translate.instant('Group deleted'));
-          this.dialogRef.close(true);
-          this.loader.close();
-        },
-        error: (error) => {
-          new EntityUtils().handleWsError(this, error, this.dialogService);
-          this.loader.close();
-        },
+      .pipe(
+        this.loader.withLoader(),
+        this.errorHandler.catchError(),
+        untilDestroyed(this),
+      )
+      .subscribe(() => {
+        this.snackbar.success(this.translate.instant('Group deleted'));
+        this.dialogRef.close(true);
       });
   }
 }

@@ -5,10 +5,8 @@ export interface SystemUpdate {
   changes: SystemUpdateChange[];
   checksum: string;
   filename: string;
-  notes?: {
-    ReleaseNotes: string;
-  };
   notice: string;
+  release_notes_url: string;
   status: SystemUpdateStatus;
   version: string;
 }
@@ -40,4 +38,5 @@ export interface SystemUpdateTrain {
 
 export interface UpdateParams {
   reboot: boolean;
+  resume?: boolean;
 }

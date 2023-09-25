@@ -2,16 +2,14 @@ import {
   Component,
   Input,
   ViewChild,
-  OnDestroy,
   OnChanges,
-  SimpleChanges,
   OnInit, Inject,
 } from '@angular/core';
 import { UntilDestroy, untilDestroyed } from '@ngneat/until-destroy';
 import { Store } from '@ngrx/store';
 import { TranslateService } from '@ngx-translate/core';
 import { UUID } from 'angular2-uuid';
-import { add, sub } from 'date-fns';
+import { add, isToday, sub } from 'date-fns';
 import {
   BehaviorSubject, Subscription, timer,
 } from 'rxjs';
@@ -19,25 +17,26 @@ import {
   delay, distinctUntilChanged, filter, switchMap, throttleTime,
 } from 'rxjs/operators';
 import { toggleMenuDuration } from 'app/constants/toggle-menu-duration';
+import { EmptyType } from 'app/enums/empty-type.enum';
+import { ReportingGraphName } from 'app/enums/reporting.enum';
 import { WINDOW } from 'app/helpers/window.helper';
-import { CoreEvent } from 'app/interfaces/events';
-import { ReportingData } from 'app/interfaces/reporting.interface';
-import { EmptyType } from 'app/modules/entity/entity-empty/entity-empty.component';
+import { ReportingData, ReportingDatabaseError } from 'app/interfaces/reporting.interface';
+import { IxSimpleChanges } from 'app/interfaces/simple-changes.interface';
+import { WebsocketError } from 'app/interfaces/websocket-error.interface';
 import { WidgetComponent } from 'app/pages/dashboard/components/widget/widget.component';
 import { LineChartComponent } from 'app/pages/reports-dashboard/components/line-chart/line-chart.component';
 import { ReportStepDirection } from 'app/pages/reports-dashboard/enums/report-step-direction.enum';
-import { ReportZoomLevel, getZoomLevelLabels } from 'app/pages/reports-dashboard/enums/report-zoom-level.enum';
+import { ReportZoomLevel, zoomLevelLabels } from 'app/pages/reports-dashboard/enums/report-zoom-level.enum';
 import {
   DateTime, LegendDataWithStackedTotalHtml, Report, FetchReportParams, TimeAxisData, TimeData,
 } from 'app/pages/reports-dashboard/interfaces/report.interface';
 import { refreshInterval } from 'app/pages/reports-dashboard/reports.constants';
-import { ReportingDatabaseError, ReportsService } from 'app/pages/reports-dashboard/reports.service';
+import { ReportsService } from 'app/pages/reports-dashboard/reports.service';
 import { formatData, formatLegendSeries } from 'app/pages/reports-dashboard/utils/report.utils';
-import { WebSocketService } from 'app/services/';
-import { CoreService } from 'app/services/core-service/core.service';
 import { DialogService } from 'app/services/dialog.service';
 import { LocaleService } from 'app/services/locale.service';
 import { ThemeService } from 'app/services/theme/theme.service';
+import { WebSocketService } from 'app/services/ws.service';
 import { AppState } from 'app/store';
 import { selectTheme, waitForPreferences } from 'app/store/preferences/preferences.selectors';
 import { selectTimezone } from 'app/store/system-config/system-config.selectors';
@@ -48,15 +47,14 @@ import { selectTimezone } from 'app/store/system-config/system-config.selectors'
   templateUrl: './report.component.html',
   styleUrls: ['./report.component.scss'],
 })
-export class ReportComponent extends WidgetComponent implements OnInit, OnChanges, OnDestroy {
+export class ReportComponent extends WidgetComponent implements OnInit, OnChanges {
   @Input() localControls?: boolean = true;
   @Input() dateFormat?: DateTime;
   @Input() report: Report;
   @Input() identifier?: string;
-  @Input() isReversed?: boolean;
   @ViewChild(LineChartComponent, { static: false }) lineChart: LineChartComponent;
 
-  updateReport$ = new BehaviorSubject<SimpleChanges>(null);
+  updateReport$ = new BehaviorSubject<IxSimpleChanges<this>>(null);
   fetchReport$ = new BehaviorSubject<FetchReportParams>(null);
   autoRefreshTimer: Subscription;
   autoRefreshEnabled: boolean;
@@ -68,9 +66,18 @@ export class ReportComponent extends WidgetComponent implements OnInit, OnChange
   subtitle: string = this.translate.instant('% of all cores');
   isActive = true;
   stepForwardDisabled = true;
+  stepBackDisabled = false;
   timezone: string;
+  lastEndDateForCurrentZoomLevel = {
+    '60m': null as number,
+    '24h': null as number,
+    '7d': null as number,
+    '1M': null as number,
+    '6M': null as number,
+  };
   currentStartDate: number;
   currentEndDate: number;
+  customZoom = false;
   zoomLevelMax = Object.keys(ReportZoomLevel).length - 1;
   zoomLevelMin = 0;
   zoomLevelIndex = this.zoomLevelMax;
@@ -81,7 +88,7 @@ export class ReportComponent extends WidgetComponent implements OnInit, OnChange
     { timespan: ReportZoomLevel.Day, timeformat: '%a %H:%M', culling: 4 },
     { timespan: ReportZoomLevel.Hour, timeformat: '%H:%M', culling: 6 },
   ];
-  readonly zoomLevelLabels = getZoomLevelLabels(this.translate);
+  readonly zoomLevelLabels = zoomLevelLabels;
 
   get reportTitle(): string {
     const trimmed = this.report.title.replace(/[()]/g, '');
@@ -100,33 +107,41 @@ export class ReportComponent extends WidgetComponent implements OnInit, OnChange
     return this.zoomLevels[this.zoomLevelIndex].timespan;
   }
 
+  get isStacked(): boolean {
+    return [
+      ReportingGraphName.Cpu,
+      ReportingGraphName.Processes,
+      ReportingGraphName.Uptime,
+      ReportingGraphName.Swap,
+      ReportingGraphName.ZfsArcResult,
+    ].includes(this.data?.name as ReportingGraphName);
+  }
+
+  get shouldShowTotal(): boolean {
+    return [
+      ReportingGraphName.ZfsArcResult,
+      ReportingGraphName.Memory,
+    ].includes(this.data?.name as ReportingGraphName);
+  }
+
   constructor(
     public translate: TranslateService,
-    private reportsService: ReportsService,
     private ws: WebSocketService,
     protected localeService: LocaleService,
     private dialog: DialogService,
-    private core: CoreService,
     private store$: Store<AppState>,
     private themeService: ThemeService,
     @Inject(WINDOW) private window: Window,
+    private reportsService: ReportsService,
   ) {
     super(translate);
-
-    this.core.register({ observerClass: this, eventName: `ReportData-${this.chartId}` }).pipe(
-      untilDestroyed(this),
-    ).subscribe((evt: CoreEvent) => {
-      this.data = formatData(evt.data);
-      this.handleError(evt);
-    });
-
-    this.core.register({ observerClass: this, eventName: `LegendEvent-${this.chartId}` }).pipe(
-      untilDestroyed(this),
-    ).subscribe((evt: CoreEvent) => {
-      const clone = { ...evt.data };
-      clone.xHTML = this.formatTime(evt.data.xHTML);
-      clone.series = formatLegendSeries(evt.data.series, this.data);
-      this.legendData = clone;
+    this.reportsService.legendEventEmitterObs$.pipe(untilDestroyed(this)).subscribe({
+      next: (data: LegendDataWithStackedTotalHtml) => {
+        const clone = { ...data };
+        clone.series = formatLegendSeries(data.series, this.data);
+        clone.xHTML = this.formatTime(data.x);
+        this.legendData = clone as LegendDataWithStackedTotalHtml;
+      },
     });
 
     this.store$.select(selectTheme).pipe(
@@ -183,7 +198,7 @@ export class ReportComponent extends WidgetComponent implements OnInit, OnChange
       filter(() => this.autoRefreshEnabled),
       untilDestroyed(this),
     ).subscribe(() => {
-      const rrdOptions = this.convertTimespan(this.currentZoomLevel);
+      const rrdOptions = this.convertTimeSpan(this.currentZoomLevel);
       this.currentStartDate = rrdOptions.start;
       this.currentEndDate = rrdOptions.end;
 
@@ -192,8 +207,18 @@ export class ReportComponent extends WidgetComponent implements OnInit, OnChange
     });
   }
 
+  ngOnChanges(changes: IxSimpleChanges<this>): void {
+    const wasReportChanged = changes?.report?.firstChange
+      || (changes.report.previousValue && !this.isReady)
+      || (changes.report.previousValue.title !== changes.report.currentValue.title);
+
+    if (wasReportChanged) {
+      this.updateReport$.next(changes);
+    }
+  }
+
   ngOnInit(): void {
-    const { start, end } = this.convertTimespan(this.currentZoomLevel);
+    const { start, end } = this.convertTimeSpan(this.currentZoomLevel);
     this.currentStartDate = start;
     this.currentEndDate = end;
     this.stepForwardDisabled = true;
@@ -205,24 +230,16 @@ export class ReportComponent extends WidgetComponent implements OnInit, OnChange
     }
   }
 
-  ngOnChanges(changes: SimpleChanges): void {
-    if (changes?.report?.firstChange) {
-      this.updateReport$.next(changes);
-    } else if (changes.report.previousValue && !this.isReady) {
-      this.updateReport$.next(changes);
-    } else if (changes.report.previousValue.title !== changes.report.currentValue.title) {
-      this.updateReport$.next(changes);
-    }
-  }
-
-  ngOnDestroy(): void {
-    this.core.unregister({ observerClass: this });
-  }
-
-  formatTime(stamp: string): string {
-    const parsed = Date.parse(stamp);
-    const result = this.localeService.formatDateTimeWithNoTz(new Date(parsed));
+  formatTime(stamp: number): string {
+    const result = this.localeService.formatDateTimeWithNoTz(new Date(stamp));
     return result.toLowerCase() !== 'invalid date' ? result : null;
+  }
+
+  onZoomChange(interval: number[]): void {
+    const [startDate, endDate] = interval;
+    this.currentStartDate = startDate;
+    this.currentEndDate = endDate;
+    this.customZoom = true;
   }
 
   setChartInteractive(value: boolean): void {
@@ -231,44 +248,77 @@ export class ReportComponent extends WidgetComponent implements OnInit, OnChange
 
   timeZoomReset(): void {
     this.zoomLevelIndex = this.zoomLevelMax;
-    const rrdOptions = this.convertTimespan(this.currentZoomLevel);
+    const rrdOptions = this.convertTimeSpan(this.currentZoomLevel);
     this.currentStartDate = rrdOptions.start;
     this.currentEndDate = rrdOptions.end;
-
+    this.customZoom = false;
     const identifier = this.report.identifiers ? this.report.identifiers[0] : null;
     this.fetchReport$.next({ rrdOptions, identifier, report: this.report });
+    this.clearLastEndDateForCurrentZoomLevel();
+  }
+
+  clearLastEndDateForCurrentZoomLevel(): void {
+    Object.keys(this.lastEndDateForCurrentZoomLevel).forEach((key: ReportZoomLevel) => {
+      this.lastEndDateForCurrentZoomLevel[key] = null;
+    });
   }
 
   timeZoomIn(): void {
-    // more detail
     if (this.zoomLevelIndex === this.zoomLevelMax) {
       return;
     }
+
+    this.lastEndDateForCurrentZoomLevel[this.currentZoomLevel] = this.currentEndDate;
     this.zoomLevelIndex += 1;
-    const rrdOptions = this.convertTimespan(this.currentZoomLevel);
+
+    let currentDate = (this.currentStartDate + this.currentEndDate) / 2;
+
+    if (this.stepForwardDisabled || isToday(this.currentEndDate)) {
+      currentDate = this.currentEndDate;
+    }
+
+    const rrdOptions = this.convertTimeSpan(this.currentZoomLevel, ReportStepDirection.Backward, currentDate);
+
     this.currentStartDate = rrdOptions.start;
     this.currentEndDate = rrdOptions.end;
-
+    this.customZoom = false;
     const identifier = this.report.identifiers ? this.report.identifiers[0] : null;
     this.fetchReport$.next({ rrdOptions, identifier, report: this.report });
   }
 
   timeZoomOut(): void {
-    // less detail
     if (this.zoomLevelIndex === this.zoomLevelMin) {
       return;
     }
     this.zoomLevelIndex -= 1;
-    const rrdOptions = this.convertTimespan(this.currentZoomLevel);
+
+    const halfPeriodMilliseconds = this.getHalfPeriodMilliseconds();
+
+    let currentDate = this.lastEndDateForCurrentZoomLevel[this.currentZoomLevel] ||
+      ((this.currentStartDate + this.currentEndDate) / 2) + halfPeriodMilliseconds;
+
+    if (this.stepForwardDisabled || isToday(this.currentEndDate)) {
+      currentDate = this.currentEndDate;
+    }
+
+    const rrdOptions = this.convertTimeSpan(this.currentZoomLevel, ReportStepDirection.Backward, currentDate);
+
     this.currentStartDate = rrdOptions.start;
     this.currentEndDate = rrdOptions.end;
-
+    this.customZoom = false;
+    this.lastEndDateForCurrentZoomLevel[this.currentZoomLevel] = null;
     const identifier = this.report.identifiers ? this.report.identifiers[0] : null;
     this.fetchReport$.next({ rrdOptions, identifier, report: this.report });
   }
 
   stepBack(): void {
-    const rrdOptions = this.convertTimespan(
+    if (this.stepBackDisabled) {
+      return;
+    }
+
+    this.clearLastEndDateForCurrentZoomLevel();
+
+    const rrdOptions = this.convertTimeSpan(
       this.currentZoomLevel,
       ReportStepDirection.Backward,
       this.currentStartDate,
@@ -281,7 +331,13 @@ export class ReportComponent extends WidgetComponent implements OnInit, OnChange
   }
 
   stepForward(): void {
-    const rrdOptions = this.convertTimespan(
+    if (this.stepForwardDisabled) {
+      return;
+    }
+
+    this.clearLastEndDateForCurrentZoomLevel();
+
+    const rrdOptions = this.convertTimeSpan(
       this.currentZoomLevel,
       ReportStepDirection.Forward,
       this.currentEndDate,
@@ -293,19 +349,17 @@ export class ReportComponent extends WidgetComponent implements OnInit, OnChange
     this.fetchReport$.next({ rrdOptions, identifier, report: this.report });
   }
 
-  // Convert timespan to start/end options for RRDTool
-  convertTimespan(
+  // Convert timespan to start/end options
+  convertTimeSpan(
     timespan: ReportZoomLevel,
     direction = ReportStepDirection.Backward,
     currentDate?: number,
   ): TimeData {
-    let durationUnit: keyof Duration;
-    let value: number;
-
+    const duration = this.getTimespan(timespan);
     const now = new Date();
-
     let startDate: Date;
     let endDate: Date;
+
     if (direction === ReportStepDirection.Backward && !currentDate) {
       endDate = now;
     } else if (direction === ReportStepDirection.Backward && currentDate) {
@@ -318,10 +372,42 @@ export class ReportComponent extends WidgetComponent implements OnInit, OnChange
       );
     }
 
-    switch (timespan) {
+    if (direction === ReportStepDirection.Backward) {
+      startDate = sub(endDate, duration);
+    } else if (direction === ReportStepDirection.Forward) {
+      endDate = add(startDate, duration);
+    }
+
+    // if endDate is in the future, reset with endDate to now
+    if (endDate.getTime() >= now.getTime()) {
+      endDate = now;
+      startDate = sub(endDate, duration);
+      this.stepForwardDisabled = true;
+    } else {
+      this.stepForwardDisabled = false;
+    }
+
+    if (startDate.getFullYear() <= 1999) {
+      this.stepBackDisabled = true;
+    } else {
+      this.stepBackDisabled = false;
+    }
+
+    return {
+      start: startDate.getTime(),
+      end: endDate.getTime(),
+      step: '10',
+    };
+  }
+
+  getTimespan(zoomLevel: ReportZoomLevel): { [x: string]: number } {
+    let durationUnit: keyof Duration;
+    let value: number;
+
+    switch (zoomLevel) {
       case ReportZoomLevel.HalfYear:
         durationUnit = 'months';
-        value = 5;
+        value = 6;
         break;
       case ReportZoomLevel.Month:
         durationUnit = 'months';
@@ -340,27 +426,7 @@ export class ReportComponent extends WidgetComponent implements OnInit, OnChange
         value = 60;
         break;
     }
-
-    if (direction === ReportStepDirection.Backward) {
-      startDate = sub(endDate, { [durationUnit]: value });
-    } else if (direction === ReportStepDirection.Forward) {
-      endDate = add(startDate, { [durationUnit]: value });
-    }
-
-    // if endDate is in the future, reset with endDate to now
-    if (endDate.getTime() >= now.getTime()) {
-      endDate = new Date();
-      startDate = sub(endDate, { [durationUnit]: value });
-      this.stepForwardDisabled = true;
-    } else {
-      this.stepForwardDisabled = false;
-    }
-
-    return {
-      start: startDate.getTime(),
-      end: endDate.getTime(),
-      step: '10',
-    };
+    return { [durationUnit]: value };
   }
 
   fetchReportData(fetchParams: FetchReportParams): void {
@@ -373,28 +439,32 @@ export class ReportComponent extends WidgetComponent implements OnInit, OnChange
     const end = Math.floor(rrdOptions.end / 1000);
     const timeFrame = { start, end };
 
-    this.core.emit({
-      name: 'ReportDataRequest',
-      data: {
-        report,
-        params,
-        timeFrame,
-        truncate: this.stepForwardDisabled,
+    this.reportsService.getNetData({
+      report,
+      params,
+      timeFrame,
+      truncate: this.stepForwardDisabled,
+    }).pipe(
+      untilDestroyed(this),
+    ).subscribe({
+      next: (event) => {
+        this.data = formatData(event);
       },
-      sender: this,
+      error: (err: WebsocketError) => {
+        this.handleError(err);
+      },
     });
   }
 
-  handleError(evt: CoreEvent): void {
-    const err = evt.data.data;
-    if (evt.data?.data?.error === ReportingDatabaseError.FailedExport) {
+  handleError(err: WebsocketError): void {
+    if (err?.error === ReportingDatabaseError.FailedExport) {
       this.report.errorConf = {
         type: EmptyType.Errors,
         title: this.translate.instant('Error getting chart data'),
         message: err.reason,
       };
     }
-    if (evt.data?.name === 'FetchingError' && evt.data?.data?.error === ReportingDatabaseError.InvalidTimestamp) {
+    if (err?.error === ReportingDatabaseError.InvalidTimestamp) {
       this.report.errorConf = {
         type: EmptyType.Errors,
         title: this.translate.instant('The reporting database is broken'),
@@ -407,7 +477,7 @@ export class ReportComponent extends WidgetComponent implements OnInit, OnChange
             this.dialog.confirm({
               title: this.translate.instant('The reporting database is broken'),
               message,
-              buttonMsg: this.translate.instant('Clear'),
+              buttonText: this.translate.instant('Clear'),
             }).pipe(
               filter(Boolean),
               switchMap(() => this.ws.call('reporting.clear')),
@@ -421,9 +491,26 @@ export class ReportComponent extends WidgetComponent implements OnInit, OnChange
     }
   }
 
-  private applyChanges(changes: SimpleChanges): void {
-    const rrdOptions = this.convertTimespan(this.currentZoomLevel);
+  private applyChanges(changes: IxSimpleChanges<this>): void {
+    const rrdOptions = this.convertTimeSpan(this.currentZoomLevel);
     const identifier = changes.report.currentValue.identifiers ? changes.report.currentValue.identifiers[0] : null;
     this.fetchReport$.next({ rrdOptions, identifier, report: changes.report.currentValue });
+  }
+
+  private getHalfPeriodMilliseconds(): number {
+    switch (this.currentZoomLevel) {
+      case ReportZoomLevel.Hour:
+        return (1 * 60 * 60 * 1000) / 2;
+      case ReportZoomLevel.Day:
+        return (1 * 24 * 60 * 60 * 1000) / 2;
+      case ReportZoomLevel.Week:
+        return (7 * 24 * 60 * 60 * 1000) / 2;
+      case ReportZoomLevel.Month:
+        return (30 * 24 * 60 * 60 * 1000) / 2;
+      case ReportZoomLevel.HalfYear:
+        return (365 * 24 * 60 * 60 * 1000) / 2;
+      default:
+        return 0;
+    }
   }
 }

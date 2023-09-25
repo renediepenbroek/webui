@@ -18,9 +18,7 @@ export default {
   disk_form_description_tooltip: T('Notes about this disk.'),
 
   disk_form_hddstandby_placeholder: T('HDD Standby'),
-  disk_form_hddstandby_tooltip: T('Minutes of inactivity before the drive enters standby mode.\
- This <a href="https://forums.freenas.org/index.php?threads/how-to-find-out-if-a-drive-is-spinning-down-properly.2068/"\
- target="_blank">forum post</a> describes identifying spun down drives. Temperature monitoring is disabled for standby disks.'),
+  disk_form_hddstandby_tooltip: T('Minutes of inactivity before the drive enters standby mode. Temperature monitoring is disabled for standby disks.'),
 
   disk_form_hddstandby_options: [
     { label: T('Always On'), value: DiskStandby.AlwaysOn },
@@ -106,7 +104,4 @@ export default {
     startDescription: T('Wiping disk...'),
     infoContent: T('Disk Wiped successfully'),
   },
-
-  dialog_title: T('Settings saved'),
-  dialog_msg_save_success: T('Successfully saved Disk settings.'),
 };

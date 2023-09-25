@@ -1,27 +1,38 @@
+/* eslint-disable @typescript-eslint/no-redundant-type-constituents */
 import { Type } from '@angular/core';
 import { TooltipPosition } from '@angular/material/tooltip';
-import { Observable } from 'rxjs';
-import { ApiMethod } from 'app/interfaces/api-directory.interface';
-import { EmptyConfig, EmptyType } from 'app/modules/entity/entity-empty/entity-empty.component';
+import { Observable, Subject } from 'rxjs';
+import { EmptyType } from 'app/enums/empty-type.enum';
+import { ApiCallMethod } from 'app/interfaces/api/api-call-directory.interface';
+import { ApiJobMethod } from 'app/interfaces/api/api-job-directory.interface';
+import { EmptyConfig } from 'app/interfaces/empty-config.interface';
 import { EntityTableComponent } from 'app/modules/entity/entity-table/entity-table.component';
 
-export interface EntityTableConfig<Row = unknown> {
+export interface SomeRow {
+  id?: string | number;
+  multiselect_id?: string | number;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  [key: string]: any;
+}
+
+export interface EntityTableConfig<Row extends SomeRow = SomeRow> {
   columns: EntityTableColumn[];
+  actionsOutOfHeader?: boolean;
   title?: string;
 
   prerequisite?: () => Promise<boolean>;
   globalConfig?: EntityTableGlobalConfig;
   columnFilter?: boolean;
   hideTopActions?: boolean;
-  queryCall?: ApiMethod;
-  queryCallOption?: any;
+  queryCall?: ApiCallMethod | ApiJobMethod;
+  queryCallOption?: unknown;
   queryCallJob?: boolean;
   resourceName?: string;
   routeEdit?: string | string[];
   routeAdd?: string[];
   queryRes?: unknown[];
   showActions?: boolean;
-  isActionVisible?: (actionId: string, row: Row) => boolean;
+  isActionVisible?: (actionId: string | number, row: Row) => boolean;
   customActions?: unknown[];
   multiActions?: EntityTableMultiAction<Row>[];
   noActions?: boolean;
@@ -30,9 +41,8 @@ export interface EntityTableConfig<Row = unknown> {
   hasDetails?: boolean;
   rowDetailComponent?: Type<unknown>;
   cardHeaderComponent?: Type<unknown>;
-  asyncView?: boolean;
-  wsDelete?: ApiMethod;
-  wsMultiDelete?: ApiMethod;
+  wsDelete?: ApiCallMethod | ApiJobMethod;
+  wsMultiDelete?: ApiJobMethod;
   noAdd?: boolean;
   emptyTableConfigMessages?: {
     errors?: { title: string; message: string };
@@ -54,29 +64,29 @@ export interface EntityTableConfig<Row = unknown> {
    */
   getCustomEmptyConfig?: (emptyType: EmptyType) => EmptyConfig;
   wsDeleteParams?: (row: Row, id: string | number) => unknown;
-  addRows?: (entity: EntityTableComponent) => void;
-  changeEvent?: (entity: EntityTableComponent) => void;
-  preInit?: (entity: EntityTableComponent) => void;
-  afterInit?: (entity: EntityTableComponent) => void;
-  dataHandler?: (entity: EntityTableComponent) => unknown;
+  addRows?: (entity: EntityTableComponent<Row>) => void;
+  changeEvent?: (entity: EntityTableComponent<Row>) => void;
+  preInit?: (entity: EntityTableComponent<Row>) => void;
+  afterInit?: (entity: EntityTableComponent<Row>) => void;
+  dataHandler?: (entity: EntityTableComponent<Row>) => Observable<unknown>;
   resourceTransformIncomingRestData?: (data: unknown) => unknown;
   getActions?: (row: Row) => EntityTableAction<Row>[];
-  getAddActions?: () => EntityTableAction[];
+  getAddActions?: () => EntityTableAction<Row>[];
   rowValue?: (row: unknown, attr: string) => unknown;
   wsMultiDeleteParams?: (selected: Row[]) => [string, (string[][] | number[][])?];
-  doAdd?: (id?: string | number, tableComponent?: EntityTableComponent) => void;
-  doEdit?: (id?: string | number, tableComponent?: EntityTableComponent) => void;
-  onCheckboxChange?: (row: Row) => void;
+  doAdd?: (id?: string | number, tableComponent?: EntityTableComponent<Row>) => void;
+  doEdit?: (id?: string | number, tableComponent?: EntityTableComponent<Row>) => void;
+  onCheckboxChange?: (row: Row, checkboxLoader$?: Subject<boolean>) => void;
   onSliderChange?: (row: Row) => void;
   onButtonClick?: (row: Row) => void;
-  callGetFunction?: (entity: EntityTableComponent) => void;
-  prerequisiteFailedHandler?: (entity: EntityTableComponent) => void;
+  callGetFunction?: (entity: EntityTableComponent<Row>) => void;
+  prerequisiteFailedHandler?: (entity: EntityTableComponent<Row>) => void;
   afterDelete?(): void;
 
   onRowClick?: (row: Row) => void;
 }
 
-export interface EntityTableAction<Row = unknown> {
+export interface EntityTableAction<Row extends SomeRow = SomeRow> {
   id: string | number;
   // TODO: Either name or actionName may be unnecessary
   name: string;
@@ -87,7 +97,7 @@ export interface EntityTableAction<Row = unknown> {
   onClick: (row?: Row) => void;
   title?: string;
   disabled?: boolean;
-  actions?: EntityTableAction[];
+  actions?: EntityTableAction<Row>[];
   matTooltip?: string;
   ttposition?: TooltipPosition;
 }
@@ -134,6 +144,7 @@ export interface EntityTableColumn {
   checkbox?: boolean;
   toggle?: boolean;
   button?: boolean;
+  disabled?: boolean;
   enableMatTooltip?: boolean;
   showLockedStatus?: boolean;
   emptyText?: string;
@@ -173,5 +184,5 @@ export interface EntityTableConfirmDialog<Row = unknown> {
   button?: string;
   isMessageComplete?: boolean;
   buildTitle?: (row: Row) => string;
-  buttonMsg?: (row: Row) => string;
+  buttonMessage?: (row: Row) => string;
 }

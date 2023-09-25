@@ -15,7 +15,9 @@ import { AppLoaderModule } from 'app/modules/loader/app-loader.module';
 import {
   SaveConfigDialogComponent,
 } from 'app/pages/system/general-settings/save-config-dialog/save-config-dialog.component';
-import { StorageService, WebSocketService } from 'app/services';
+import { DialogService } from 'app/services/dialog.service';
+import { StorageService } from 'app/services/storage.service';
+import { WebSocketService } from 'app/services/ws.service';
 import { selectSystemInfo } from 'app/store/system-info/system-info.selectors';
 
 describe('SaveConfigDialogComponent', () => {
@@ -50,6 +52,7 @@ describe('SaveConfigDialogComponent', () => {
         downloadUrl: jest.fn(() => of(undefined)),
       }),
       mockProvider(MatDialogRef),
+      mockProvider(DialogService),
     ],
   });
 

@@ -1,13 +1,15 @@
 import {
-  Component, OnInit, Input, ViewChild, AfterViewInit, AfterViewChecked, ElementRef,
+  Component, OnInit, Input, ViewChild, AfterViewInit, AfterViewChecked, ElementRef, TrackByFunction,
 } from '@angular/core';
 import { untilDestroyed, UntilDestroy } from '@ngneat/until-destroy';
 import { TranslateService } from '@ngx-translate/core';
 import { Observable, Subject } from 'rxjs';
+import { EmptyType } from 'app/enums/empty-type.enum';
 import { JobState } from 'app/enums/job-state.enum';
 import { LinkState } from 'app/enums/network-interface.enum';
-import { ApiDirectory } from 'app/interfaces/api-directory.interface';
-import { EmptyConfig, EmptyType } from 'app/modules/entity/entity-empty/entity-empty.component';
+import { ApiCallMethod } from 'app/interfaces/api/api-call-directory.interface';
+import { ApiJobMethod } from 'app/interfaces/api/api-job-directory.interface';
+import { EmptyConfig } from 'app/interfaces/empty-config.interface';
 import { TableService } from 'app/modules/entity/table/table.service';
 
 export interface AppTableAction<Row = unknown> {
@@ -15,6 +17,8 @@ export interface AppTableAction<Row = unknown> {
   icon: string;
   matTooltip?: string;
   onChanging?: boolean;
+  disabled?: boolean;
+  disabledCondition?: (row: Row) => boolean;
   onClick: (row: Row) => void;
 }
 
@@ -32,9 +36,13 @@ export interface AppTableColumn {
   prop2?: string;
   checkbox?: boolean;
   slideToggle?: boolean;
+  disabled?: boolean;
   onChange?(data: unknown): void;
   width?: string;
-  state?: any;
+  state?: {
+    prop: string;
+    icon?: string;
+  };
   button?: boolean;
   showLockedStatus?: boolean;
   tooltip?: string;
@@ -48,7 +56,7 @@ export interface AppTableColumn {
 
 export interface AppTableConfirmDeleteDialog {
   buildTitle?(args: unknown): string;
-  buttonMsg?(args: unknown): string;
+  buttonMessage?(args: unknown): string;
   title?: string;
   message?: string;
   button?: string;
@@ -60,9 +68,9 @@ export interface AppTableConfig<P = unknown> {
   title?: string;
   titleHref?: string;
   columns: AppTableColumn[];
-  queryCall: keyof ApiDirectory;
+  queryCall: ApiCallMethod;
   queryCallOption?: unknown;
-  deleteCall?: keyof ApiDirectory;
+  deleteCall?: ApiCallMethod | ApiJobMethod;
   deleteCallIsJob?: boolean;
   complex?: boolean;
   hideHeader?: boolean; // hide table header row
@@ -80,18 +88,21 @@ export interface AppTableConfig<P = unknown> {
   /**
    * @deprecated Use arrow functions
    */
-  parent: P;
+  parent?: P;
   tableActions?: AppTableHeaderAction[];
   tableFooterActions?: AppTableHeaderAction[];
   tableExtraActions?: AppTableHeaderAction[];
   confirmDeleteDialog?: AppTableConfirmDeleteDialog;
+  addActionDisabled?: boolean;
+  editActionDisabled?: boolean;
+  deleteActionDisabled?: boolean;
 
   add?(): void; // add action function
   afterGetData?(data: unknown): void;
   afterDelete?(): void;
   edit?(any: unknown): void; // edit row
   delete?(item: unknown, table: TableComponent): void; // customize delete row method
-  dataSourceHelper?(any: unknown[]): unknown[]; // customise handle/modify dataSource
+  dataSourceHelper?(any: unknown): unknown[]; // customise handle/modify dataSource
   getInOutInfo?(any: unknown): void; // get in out info if has state column
   getActions?: () => AppTableAction[]; // actions for each row
   isActionVisible?(actionId: string, entity: unknown): boolean; // determine if action is visible
@@ -102,6 +113,18 @@ export interface AppTableConfig<P = unknown> {
   afterGetDataExpandable?<T>(data: T[]): T[]; // field introduced by ExpandableTable, "fake" field
 }
 
+/**
+ * @deprecated
+ */
+interface InOutInfo extends Record<string, unknown> {
+  oldSent?: number;
+  sent_bytes?: number;
+  oldReceived?: number;
+  received_bytes?: number;
+  sent?: number;
+  received?: number;
+}
+
 @UntilDestroy()
 @Component({
   selector: 'ix-conf-table',
@@ -109,7 +132,8 @@ export interface AppTableConfig<P = unknown> {
   styleUrls: ['./table.component.scss'],
   providers: [TableService],
 })
-export class TableComponent<Row = Record<string, any>> implements OnInit, AfterViewInit, AfterViewChecked {
+export class TableComponent<Row extends Record<string, unknown> = Record<string, unknown>>
+implements OnInit, AfterViewInit, AfterViewChecked {
   @ViewChild('table') table: ElementRef<HTMLElement>;
   LinkState = LinkState;
 
@@ -138,6 +162,12 @@ export class TableComponent<Row = Record<string, any>> implements OnInit, AfterV
 
   private tableHeight: number;
 
+  trackTask: TrackByFunction<Row> = (index: number, row: Row): unknown => row[this.idProp];
+
+  get isOverflow(): boolean {
+    return this.TABLE_MIN_ROWS < this.dataSource?.length;
+  }
+
   get tableConf(): AppTableConfig {
     return this._tableConf;
   }
@@ -165,6 +195,7 @@ export class TableComponent<Row = Record<string, any>> implements OnInit, AfterV
 
     this.tableHeight = this.table.nativeElement.offsetHeight;
     if (this.enableViewMore) {
+      this.displayedDataSource = this.dataSource;
       return;
     }
     this.limitRows = Math.floor(
@@ -184,6 +215,14 @@ export class TableComponent<Row = Record<string, any>> implements OnInit, AfterV
     }
   }
 
+  ngOnInit(): void {
+    this.populateTable();
+
+    this.afterGetDataHook$.pipe(untilDestroyed(this)).subscribe(() => {
+      this.updateColumns();
+    });
+  }
+
   ngAfterViewInit(): void {
     this.calculateLimitRows();
   }
@@ -192,14 +231,6 @@ export class TableComponent<Row = Record<string, any>> implements OnInit, AfterV
     if (this.tableHeight !== this.table.nativeElement.offsetHeight) {
       setTimeout(() => this.calculateLimitRows());
     }
-  }
-
-  ngOnInit(): void {
-    this.populateTable();
-
-    this.afterGetDataHook$.pipe(untilDestroyed(this)).subscribe(() => {
-      this.updateColumns();
-    });
   }
 
   populateTable(): void {
@@ -234,7 +265,7 @@ export class TableComponent<Row = Record<string, any>> implements OnInit, AfterV
     this.displayedColumns = this._tableConf.columns
       .map((column) => {
         if (this.dataSource && column?.hiddenIfEmpty && !column?.hidden) {
-          const hasSomeData = this.dataSource.some((row) => (row as any)[column.prop]?.toString().trim());
+          const hasSomeData = this.dataSource.some((row) => row[column.prop]?.toString().trim());
           column.hidden = !hasSomeData;
         }
         return column;
@@ -249,7 +280,7 @@ export class TableComponent<Row = Record<string, any>> implements OnInit, AfterV
   }
 
   editRow(row: Row): void {
-    if (this._tableConf.edit) {
+    if (this._tableConf.edit && !this._tableConf.editActionDisabled) {
       this._tableConf.edit(row);
     }
   }
@@ -268,7 +299,7 @@ export class TableComponent<Row = Record<string, any>> implements OnInit, AfterV
     }
   }
 
-  showInOutInfo(element: any): string {
+  showInOutInfo(element: InOutInfo): string {
     if (element.oldSent === undefined) {
       element.oldSent = element.sent_bytes;
     }
@@ -277,11 +308,11 @@ export class TableComponent<Row = Record<string, any>> implements OnInit, AfterV
     }
     if (element.sent_bytes - element.oldSent > 1024) {
       element.oldSent = element.sent_bytes;
-      this.tableService.updateStateInfoIcon(element[this.idProp], 'sent');
+      this.tableService.updateStateInfoIcon(element[this.idProp] as string, 'sent');
     }
     if (element.received_bytes - element.oldReceived > 1024) {
       element.oldReceived = element.received_bytes;
-      this.tableService.updateStateInfoIcon(element[this.idProp], 'received');
+      this.tableService.updateStateInfoIcon(element[this.idProp] as string, 'received');
     }
 
     return `${this.translate.instant('Sent')}: ${element.sent} ${this.translate.instant('Received')}: ${element.received}`;
@@ -311,7 +342,6 @@ export class TableComponent<Row = Record<string, any>> implements OnInit, AfterV
 
     switch (state) {
       case JobState.Pending:
-      case JobState.Running:
       case JobState.Aborted:
         return 'fn-theme-orange';
       case JobState.Finished:
@@ -323,6 +353,7 @@ export class TableComponent<Row = Record<string, any>> implements OnInit, AfterV
       case JobState.Locked:
       case JobState.Hold:
         return 'fn-theme-yellow';
+      case JobState.Running:
       default:
         return 'fn-theme-primary';
     }
@@ -341,10 +372,10 @@ export class TableComponent<Row = Record<string, any>> implements OnInit, AfterV
       return 'slide-toggle';
     }
 
-    if (column.state && column.state.prop && this._tableConf.getInOutInfo) {
+    if (column.state?.prop && this._tableConf.getInOutInfo) {
       return 'state-info';
     }
-    if (column.state && column.state.icon) {
+    if (column.state?.icon) {
       return 'state-icon';
     }
 

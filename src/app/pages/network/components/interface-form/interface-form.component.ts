@@ -1,10 +1,11 @@
 import {
-  ChangeDetectionStrategy, ChangeDetectorRef, Component, OnInit,
+  ChangeDetectionStrategy, ChangeDetectorRef, Component, Inject, OnInit,
 } from '@angular/core';
 import { Validators } from '@angular/forms';
 import { MatDialog } from '@angular/material/dialog';
 import { FormBuilder } from '@ngneat/reactive-forms';
 import { UntilDestroy, untilDestroyed } from '@ngneat/until-destroy';
+import { Store } from '@ngrx/store';
 import { TranslateService } from '@ngx-translate/core';
 import { range } from 'lodash';
 import { forkJoin, of } from 'rxjs';
@@ -17,17 +18,20 @@ import {
   XmitHashPolicy,
 } from 'app/enums/network-interface.enum';
 import { ProductType } from 'app/enums/product-type.enum';
-import { choicesToOptions, singleArrayToOptions } from 'app/helpers/options.helper';
+import { choicesToOptions, singleArrayToOptions } from 'app/helpers/operators/options.operators';
 import helptext from 'app/helptext/network/interfaces/interfaces-form';
 import {
   NetworkInterface,
   NetworkInterfaceCreate,
   NetworkInterfaceUpdate,
 } from 'app/interfaces/network-interface.interface';
-import { ipv4or6cidrValidator, ipv4or6Validator } from 'app/modules/entity/entity-form/validators/ip-validation';
-import { rangeValidator } from 'app/modules/entity/entity-form/validators/range-validation';
+import { IxSlideInRef } from 'app/modules/ix-forms/components/ix-slide-in/ix-slide-in-ref';
+import { SLIDE_IN_DATA } from 'app/modules/ix-forms/components/ix-slide-in/ix-slide-in.token';
 import { FormErrorHandlerService } from 'app/modules/ix-forms/services/form-error-handler.service';
 import { IxValidatorsService } from 'app/modules/ix-forms/services/ix-validators.service';
+import { ipv4or6cidrValidator, ipv4or6Validator } from 'app/modules/ix-forms/validators/ip-validation';
+import { rangeValidator } from 'app/modules/ix-forms/validators/range-validation/range-validation';
+import { SnackbarService } from 'app/modules/snackbar/services/snackbar.service';
 import {
   DefaultGatewayDialogComponent,
 } from 'app/pages/network/components/default-gateway-dialog/default-gateway-dialog.component';
@@ -39,9 +43,11 @@ import {
   interfaceAliasesToFormAliases,
   NetworkInterfaceFormAlias,
 } from 'app/pages/network/components/interface-form/network-interface-alias-control.interface';
-import { NetworkService, SystemGeneralService, WebSocketService } from 'app/services';
-import { CoreService } from 'app/services/core-service/core.service';
-import { IxSlideInService } from 'app/services/ix-slide-in.service';
+import { NetworkService } from 'app/services/network.service';
+import { SystemGeneralService } from 'app/services/system-general.service';
+import { WebSocketService } from 'app/services/ws.service';
+import { AppState } from 'app/store';
+import { networkInterfacesChanged } from 'app/store/network-interfaces/network-interfaces.actions';
 
 @UntilDestroy()
 @Component({
@@ -54,7 +60,7 @@ export class InterfaceFormComponent implements OnInit {
   readonly defaultMtu = 1500;
 
   isLoading = false;
-  isHa = false;
+  isHaLicensed = false;
   ipLabelSuffix = '';
   failoverLabelSuffix = '';
 
@@ -122,8 +128,6 @@ export class InterfaceFormComponent implements OnInit {
 
   readonly helptext = helptext;
 
-  private existingInterface: NetworkInterface;
-
   constructor(
     private formBuilder: FormBuilder,
     private cdr: ChangeDetectorRef,
@@ -131,12 +135,14 @@ export class InterfaceFormComponent implements OnInit {
     private translate: TranslateService,
     private networkService: NetworkService,
     private errorHandler: FormErrorHandlerService,
-    private slideInService: IxSlideInService,
-    private core: CoreService,
+    private snackbar: SnackbarService,
     private validatorsService: IxValidatorsService,
     private interfaceFormValidator: InterfaceNameValidatorService,
     private matDialog: MatDialog,
     private systemGeneralService: SystemGeneralService,
+    private slideInRef: IxSlideInRef<InterfaceFormComponent>,
+    private store$: Store<AppState>,
+    @Inject(SLIDE_IN_DATA) private existingInterface: NetworkInterface,
   ) {}
 
   get isNew(): boolean {
@@ -144,27 +150,27 @@ export class InterfaceFormComponent implements OnInit {
   }
 
   get isVlan(): boolean {
-    return this.form.get('type').value === NetworkInterfaceType.Vlan;
+    return this.form.controls.type.value === NetworkInterfaceType.Vlan;
   }
 
   get isBridge(): boolean {
-    return this.form.get('type').value === NetworkInterfaceType.Bridge;
+    return this.form.controls.type.value === NetworkInterfaceType.Bridge;
   }
 
   get isLag(): boolean {
-    return this.form.get('type').value === NetworkInterfaceType.LinkAggregation;
+    return this.form.controls.type.value === NetworkInterfaceType.LinkAggregation;
   }
 
   get isLacpLag(): boolean {
-    return this.form.get('lag_protocol').value === LinkAggregationProtocol.Lacp;
+    return this.form.controls.lag_protocol.value === LinkAggregationProtocol.Lacp;
   }
 
   get isFailover(): boolean {
-    return this.form.get('lag_protocol').value === LinkAggregationProtocol.Failover;
+    return this.form.controls.lag_protocol.value === LinkAggregationProtocol.Failover;
   }
 
   get isLoadBalanceLag(): boolean {
-    return this.form.get('lag_protocol').value === LinkAggregationProtocol.LoadBalance;
+    return this.form.controls.lag_protocol.value === LinkAggregationProtocol.LoadBalance;
   }
 
   get canHaveAliases(): boolean {
@@ -174,15 +180,18 @@ export class InterfaceFormComponent implements OnInit {
   ngOnInit(): void {
     this.loadFailoverStatus();
     this.validateNameOnTypeChange();
+
+    if (this.existingInterface) {
+      this.setInterfaceForEdit();
+    }
   }
 
-  setInterfaceForEdit(interfaceToEdit: NetworkInterface): void {
-    this.existingInterface = interfaceToEdit;
-    interfaceToEdit.aliases.forEach(() => this.addAlias());
+  setInterfaceForEdit(): void {
+    this.existingInterface.aliases.forEach(() => this.addAlias());
     this.form.patchValue({
-      ...interfaceToEdit,
-      mtu: interfaceToEdit.mtu || this.defaultMtu,
-      aliases: interfaceAliasesToFormAliases(interfaceToEdit),
+      ...this.existingInterface,
+      mtu: this.existingInterface.mtu || this.defaultMtu,
+      aliases: interfaceAliasesToFormAliases(this.existingInterface),
     });
 
     this.setOptionsForEdit();
@@ -194,14 +203,14 @@ export class InterfaceFormComponent implements OnInit {
       address: ['', [Validators.required, ipv4or6cidrValidator()]],
       failover_address: ['', [
         this.validatorsService.validateOnCondition(
-          () => this.isHa,
+          () => this.isHaLicensed,
           Validators.required,
         ),
         ipv4or6Validator(),
       ]],
       failover_virtual_address: ['', [
         this.validatorsService.validateOnCondition(
-          () => this.isHa,
+          () => this.isHaLicensed,
           Validators.required,
         ),
         ipv4or6Validator(),
@@ -224,8 +233,9 @@ export class InterfaceFormComponent implements OnInit {
     request$.pipe(untilDestroyed(this)).subscribe({
       next: () => {
         this.isLoading = false;
-        this.core.emit({ name: 'NetworkInterfacesChanged', data: { commit: false, checkin: false }, sender: this });
-        this.slideInService.close();
+        this.snackbar.success(this.translate.instant('Network interface updated'));
+        this.store$.dispatch(networkInterfacesChanged({ commit: false, checkIn: false }));
+        this.slideInRef.close(true);
 
         this.ws.call('interface.default_route_will_be_removed').pipe(
           filter(Boolean),
@@ -276,9 +286,9 @@ export class InterfaceFormComponent implements OnInit {
       this.ws.call('failover.node'),
     ])
       .pipe(untilDestroyed(this))
-      .subscribe(([isHa, failoverNode]) => {
-        this.isHa = isHa;
-        if (isHa) {
+      .subscribe(([isHaLicensed, failoverNode]) => {
+        this.isHaLicensed = isHaLicensed;
+        if (isHaLicensed) {
           if (failoverNode === 'A') {
             this.ipLabelSuffix = ' ' + this.translate.instant('(This Controller)');
             this.failoverLabelSuffix = ' ' + this.translate.instant('(TrueNAS Controller 2)');
@@ -312,7 +322,7 @@ export class InterfaceFormComponent implements OnInit {
     const aliases = formAliasesToInterfaceAliases(formValues.aliases);
     params.aliases = aliases.aliases;
 
-    if (this.isHa) {
+    if (this.isHaLicensed) {
       params.failover_aliases = aliases.failover_aliases;
       params.failover_virtual_aliases = aliases.failover_virtual_aliases;
     }
@@ -340,7 +350,7 @@ export class InterfaceFormComponent implements OnInit {
       };
     }
 
-    if (this.isHa) {
+    if (this.isHaLicensed) {
       params = {
         ...params,
         failover_critical: formValues.failover_critical,

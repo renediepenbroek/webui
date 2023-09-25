@@ -1,29 +1,29 @@
 import {
-  ChangeDetectionStrategy, ChangeDetectorRef, Component, Input, OnChanges, OnDestroy,
+  ChangeDetectionStrategy, ChangeDetectorRef, Component, Input, OnChanges,
 } from '@angular/core';
 import { MatDialog } from '@angular/material/dialog';
 import { marker as T } from '@biesbjerg/ngx-translate-extract-marker';
 import { UntilDestroy, untilDestroyed } from '@ngneat/until-destroy';
 import { TranslateService } from '@ngx-translate/core';
 import { formatDuration } from 'date-fns';
-import { EMPTY, Observable } from 'rxjs';
-import {
-  catchError, filter, map, switchMap,
-} from 'rxjs/operators';
+import { Observable, Subscription } from 'rxjs';
+import { filter, map, switchMap } from 'rxjs/operators';
+import { PoolCardIconType } from 'app/enums/pool-card-icon-type.enum';
 import { PoolScanFunction } from 'app/enums/pool-scan-function.enum';
 import { PoolScanState } from 'app/enums/pool-scan-state.enum';
 import { PoolScrubAction } from 'app/enums/pool-scrub-action.enum';
-import { getPoolStatusLabels, PoolStatus } from 'app/enums/pool-status.enum';
-import { secondsToDuration } from 'app/helpers/time.helpters';
-import { LoadingState, toLoadingState } from 'app/helpers/to-loading-state.helper';
+import { PoolStatus, poolStatusLabels } from 'app/enums/pool-status.enum';
+import { LoadingState, toLoadingState } from 'app/helpers/operators/to-loading-state.helper';
+import { secondsToDuration } from 'app/helpers/time.helpers';
 import { Pool, PoolScanUpdate } from 'app/interfaces/pool.interface';
-import { PoolScan } from 'app/interfaces/resilver-job.interface';
 import { TopologyItem } from 'app/interfaces/storage.interface';
 import {
   AutotrimDialogComponent,
 } from 'app/pages/storage/components/dashboard-pool/zfs-health-card/autotrim-dialog/autotrim-dialog.component';
 import { PoolsDashboardStore } from 'app/pages/storage/stores/pools-dashboard-store.service';
-import { DialogService, WebSocketService } from 'app/services';
+import { DialogService } from 'app/services/dialog.service';
+import { ErrorHandlerService } from 'app/services/error-handler.service';
+import { WebSocketService } from 'app/services/ws.service';
 
 @UntilDestroy()
 @Component({
@@ -32,33 +32,49 @@ import { DialogService, WebSocketService } from 'app/services';
   styleUrls: ['./zfs-health-card.component.scss'],
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
-export class ZfsHealthCardComponent implements OnChanges, OnDestroy {
+export class ZfsHealthCardComponent implements OnChanges {
   @Input() pool: Pool;
 
   scan: PoolScanUpdate;
   totalZfsErrors = 0;
-  poolScanSubscriptionId: string;
+  poolScanSubscription: Subscription;
 
   hasScrubTask$: Observable<LoadingState<boolean>>;
 
-  readonly poolStatusLabels = getPoolStatusLabels(this.translate);
-  readonly PoolStatus = PoolStatus;
+  readonly poolStatusLabels = poolStatusLabels;
 
   constructor(
     private ws: WebSocketService,
     private cdr: ChangeDetectorRef,
     private translate: TranslateService,
     private dialogService: DialogService,
+    private errorHandler: ErrorHandlerService,
     private dialog: MatDialog,
     private store: PoolsDashboardStore,
   ) { }
 
-  get isScanRunning(): boolean {
+  get scanLabel(): string {
+    if (!this.isScrub) {
+      return this.translate.instant('Resilvering:');
+    }
+
+    if (this.isScrubPaused) {
+      return this.translate.instant('Scrub Paused');
+    }
+
+    return this.translate.instant('Scrub In Progress:');
+  }
+
+  get wasScanInitiated(): boolean {
     return this.scan?.state === PoolScanState.Scanning;
   }
 
-  get isScanScrub(): boolean {
+  get isScrub(): boolean {
     return this.scan?.function === PoolScanFunction.Scrub;
+  }
+
+  get isScrubPaused(): boolean {
+    return Boolean(this.scan?.pause);
   }
 
   get scanDuration(): string {
@@ -80,14 +96,42 @@ export class ZfsHealthCardComponent implements OnChanges, OnDestroy {
     // TODO: Consider implementing a reactive service for localized time formatting.
     switch (this.scan.state) {
       case PoolScanState.Finished:
-        return this.isScanScrub
+        return this.isScrub
           ? T('Finished Scrub on {date}')
           : T('Finished Resilver on {date}');
       case PoolScanState.Canceled:
-        return this.isScanScrub
+        return this.isScrub
           ? T('Canceled Scrub on {date}')
           : T('Canceled Resilver on {date}');
+      default:
+        return '';
     }
+  }
+
+  get iconType(): PoolCardIconType {
+    if (!this.pool.healthy) {
+      return PoolCardIconType.Error;
+    }
+    if (this.pool.status === PoolStatus.Degraded) {
+      return PoolCardIconType.Warn;
+    }
+    if (this.pool.status === PoolStatus.Faulted) {
+      return PoolCardIconType.Faulted;
+    }
+    return PoolCardIconType.Safe;
+  }
+
+  get iconTooltip(): string {
+    if (!this.pool.healthy) {
+      return this.translate.instant('Pool is not healthy');
+    }
+    if (this.pool.status === PoolStatus.Degraded) {
+      return this.translate.instant('Pool status is {status}', { status: this.pool.status });
+    }
+    if (this.pool.status === PoolStatus.Faulted) {
+      return this.translate.instant('Pool status is {status}', { status: this.pool.status });
+    }
+    return this.translate.instant('Everything is fine');
   }
 
   ngOnChanges(): void {
@@ -103,15 +147,12 @@ export class ZfsHealthCardComponent implements OnChanges, OnDestroy {
     this.dialogService.confirm({
       message,
       title: this.translate.instant('Scrub Pool'),
-      buttonMsg: this.translate.instant('Start Scrub'),
+      buttonText: this.translate.instant('Start Scrub'),
     })
       .pipe(
         filter(Boolean),
-        switchMap(() => this.ws.call('pool.scrub', [this.pool.id, PoolScrubAction.Start])),
-        catchError((error) => {
-          this.dialogService.errorReportMiddleware(error);
-          return EMPTY;
-        }),
+        switchMap(() => this.ws.startJob('pool.scrub', [this.pool.id, PoolScrubAction.Start])),
+        this.errorHandler.catchError(),
         untilDestroyed(this),
       )
       .subscribe();
@@ -122,16 +163,25 @@ export class ZfsHealthCardComponent implements OnChanges, OnDestroy {
     this.dialogService.confirm({
       message,
       title: this.translate.instant('Scrub Pool'),
-      buttonMsg: this.translate.instant('Stop Scrub'),
+      buttonText: this.translate.instant('Stop Scrub'),
     }).pipe(
       filter(Boolean),
-      switchMap(() => this.ws.call('pool.scrub', [this.pool.id, PoolScrubAction.Stop])),
-      catchError((error) => {
-        this.dialogService.errorReportMiddleware(error);
-        return EMPTY;
-      }),
+      switchMap(() => this.ws.startJob('pool.scrub', [this.pool.id, PoolScrubAction.Stop])),
+      this.errorHandler.catchError(),
       untilDestroyed(this),
     ).subscribe();
+  }
+
+  onPauseScrub(): void {
+    this.ws.startJob('pool.scrub', [this.pool.id, PoolScrubAction.Pause])
+      .pipe(untilDestroyed(this))
+      .subscribe();
+  }
+
+  onResumeScrub(): void {
+    this.ws.startJob('pool.scrub', [this.pool.id, PoolScrubAction.Start])
+      .pipe(untilDestroyed(this))
+      .subscribe();
   }
 
   onEditAutotrim(): void {
@@ -142,26 +192,20 @@ export class ZfsHealthCardComponent implements OnChanges, OnDestroy {
       .subscribe(() => this.store.loadDashboard());
   }
 
-  ngOnDestroy(): void {
-    this.unsubscribeFromScan();
-  }
-
   private subscribeToScan(): void {
-    this.unsubscribeFromScan();
-    this.poolScanSubscriptionId = `zfs.pool.scan - ${this.pool.name}`;
-    this.ws.sub<PoolScan>('zfs.pool.scan', this.poolScanSubscriptionId)
+    if (this.poolScanSubscription && !this.poolScanSubscription.closed) {
+      this.poolScanSubscription.unsubscribe();
+    }
+    this.poolScanSubscription = this.ws.subscribe('zfs.pool.scan')
       .pipe(
+        map((apiEvent) => apiEvent.fields),
         filter((scan) => scan.name === this.pool.name),
+        this.errorHandler.catchError(),
         untilDestroyed(this),
       )
-      .subscribe({
-        next: (scan) => {
-          this.scan = scan.scan;
-          this.cdr.markForCheck();
-        },
-        error: (error) => {
-          this.dialogService.errorReportMiddleware(error);
-        },
+      .subscribe((scan) => {
+        this.scan = scan.scan;
+        this.cdr.markForCheck();
       });
   }
 
@@ -176,21 +220,13 @@ export class ZfsHealthCardComponent implements OnChanges, OnDestroy {
     if (!this.pool.topology) {
       return;
     }
-    this.totalZfsErrors = Object.values(this.pool.topology).reduce((errors: number, vdevs: TopologyItem[]) => {
-      return errors + vdevs.reduce((errors, vdev) => {
-        return errors
+    this.totalZfsErrors = Object.values(this.pool.topology).reduce((totalErrors: number, vdevs: TopologyItem[]) => {
+      return totalErrors + vdevs.reduce((vdevCategoryErrors, vdev) => {
+        return vdevCategoryErrors
           + (vdev.stats?.read_errors || 0)
           + (vdev.stats?.write_errors || 0)
           + (vdev.stats?.checksum_errors || 0);
       }, 0);
     }, 0);
-  }
-
-  private unsubscribeFromScan(): void {
-    if (!this.poolScanSubscriptionId) {
-      return;
-    }
-
-    this.ws.unsub('zfs.pool.scan', this.poolScanSubscriptionId);
   }
 }

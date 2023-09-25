@@ -2,15 +2,19 @@ import {
   ChangeDetectionStrategy, ChangeDetectorRef, Component, OnInit,
 } from '@angular/core';
 import { FormBuilder, Validators } from '@angular/forms';
-import { Router } from '@angular/router';
 import { UntilDestroy, untilDestroyed } from '@ngneat/until-destroy';
+import { TranslateService } from '@ngx-translate/core';
 import { of } from 'rxjs';
 import helptext from 'app/helptext/services/components/service-snmp';
 import { SnmpConfigUpdate } from 'app/interfaces/snmp-config.interface';
-import { EntityUtils } from 'app/modules/entity/utils';
+import { WebsocketError } from 'app/interfaces/websocket-error.interface';
+import { IxSlideInRef } from 'app/modules/ix-forms/components/ix-slide-in/ix-slide-in-ref';
 import { FormErrorHandlerService } from 'app/modules/ix-forms/services/form-error-handler.service';
 import { IxValidatorsService } from 'app/modules/ix-forms/services/ix-validators.service';
-import { DialogService, WebSocketService } from 'app/services';
+import { SnackbarService } from 'app/modules/snackbar/services/snackbar.service';
+import { DialogService } from 'app/services/dialog.service';
+import { ErrorHandlerService } from 'app/services/error-handler.service';
+import { WebSocketService } from 'app/services/ws.service';
 
 @UntilDestroy()
 @Component({
@@ -55,7 +59,6 @@ export class ServiceSnmpComponent implements OnInit {
     v3_privproto: helptext.v3_privproto_tooltip,
     v3_privpassphrase: helptext.v3_privpassphrase_tooltip,
     options: helptext.options_tooltip,
-    zilstat: helptext.zilstat_tooltip,
     loglevel: helptext.loglevel_tooltip,
   };
 
@@ -64,17 +67,20 @@ export class ServiceSnmpComponent implements OnInit {
   readonly logLevelOptions$ = of(helptext.loglevel_options);
 
   get isV3SupportEnabled(): boolean {
-    return this.form?.value?.['v3'];
+    return this.form?.value?.v3;
   }
 
   constructor(
     private fb: FormBuilder,
     private ws: WebSocketService,
     private dialogService: DialogService,
+    private errorHandler: ErrorHandlerService,
     private cdr: ChangeDetectorRef,
-    private router: Router,
-    private errorHandler: FormErrorHandlerService,
+    private formErrorHandler: FormErrorHandlerService,
     private validation: IxValidatorsService,
+    private snackbar: SnackbarService,
+    private translate: TranslateService,
+    private slideInRef: IxSlideInRef<ServiceSnmpComponent>,
   ) {}
 
   ngOnInit(): void {
@@ -95,12 +101,13 @@ export class ServiceSnmpComponent implements OnInit {
     this.ws.call('snmp.update', [values as SnmpConfigUpdate]).pipe(untilDestroyed(this)).subscribe({
       next: () => {
         this.isFormLoading = false;
+        this.snackbar.success(this.translate.instant('Service configuration saved'));
+        this.slideInRef.close();
         this.cdr.markForCheck();
-        this.router.navigate(['/services']);
       },
       error: (error) => {
         this.isFormLoading = false;
-        this.errorHandler.handleWsFormError(error, this.form);
+        this.formErrorHandler.handleWsFormError(error, this.form);
         this.cdr.markForCheck();
       },
     });
@@ -114,8 +121,8 @@ export class ServiceSnmpComponent implements OnInit {
         this.form.patchValue(config);
         this.cdr.markForCheck();
       },
-      error: (error) => {
-        new EntityUtils().handleWsError(this, error, this.dialogService);
+      error: (error: WebsocketError) => {
+        this.dialogService.error(this.errorHandler.parseWsError(error));
         this.isFormLoading = false;
         this.cdr.markForCheck();
       },

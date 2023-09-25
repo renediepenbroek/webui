@@ -1,20 +1,22 @@
 import {
-  ChangeDetectionStrategy, ChangeDetectorRef, Component, OnInit,
+  ChangeDetectionStrategy, ChangeDetectorRef, Component, Inject, OnInit,
 } from '@angular/core';
 import { UntypedFormGroup, Validators } from '@angular/forms';
 import { FormBuilder, FormControl } from '@ngneat/reactive-forms';
 import { UntilDestroy, untilDestroyed } from '@ngneat/until-destroy';
 import { TranslateService } from '@ngx-translate/core';
-import { Observable, of } from 'rxjs';
+import { BehaviorSubject, Observable, of } from 'rxjs';
 import { DnsAuthenticatorType } from 'app/enums/dns-authenticator-type.enum';
 import { DynamicFormSchemaType } from 'app/enums/dynamic-form-schema-type.enum';
 import { helptextSystemAcme as helptext } from 'app/helptext/system/acme';
 import { AuthenticatorSchema, DnsAuthenticator } from 'app/interfaces/dns-authenticator.interface';
 import { DynamicFormSchema, DynamicFormSchemaNode } from 'app/interfaces/dynamic-form-schema.interface';
 import { Option } from 'app/interfaces/option.interface';
+import { CustomUntypedFormField } from 'app/modules/ix-dynamic-form/components/ix-dynamic-form/classes/custom-untyped-form-field';
+import { IxSlideInRef } from 'app/modules/ix-forms/components/ix-slide-in/ix-slide-in-ref';
+import { SLIDE_IN_DATA } from 'app/modules/ix-forms/components/ix-slide-in/ix-slide-in.token';
 import { FormErrorHandlerService } from 'app/modules/ix-forms/services/form-error-handler.service';
-import { WebSocketService } from 'app/services';
-import { IxSlideInService } from 'app/services/ix-slide-in.service';
+import { WebSocketService } from 'app/services/ws.service';
 
 interface DnsAuthenticatorList {
   key: string;
@@ -24,7 +26,6 @@ interface DnsAuthenticatorList {
 @UntilDestroy()
 @Component({
   templateUrl: './acmedns-form.component.html',
-  styleUrls: ['./acmedns-form.component.scss'],
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class AcmednsFormComponent implements OnInit {
@@ -45,7 +46,7 @@ export class AcmednsFormComponent implements OnInit {
   });
 
   get formGroup(): UntypedFormGroup {
-    return this.form.controls['attributes'] as UntypedFormGroup;
+    return this.form.controls.attributes as UntypedFormGroup;
   }
 
   isLoading = false;
@@ -65,14 +66,19 @@ export class AcmednsFormComponent implements OnInit {
   constructor(
     private translate: TranslateService,
     private formBuilder: FormBuilder,
-    private slideInService: IxSlideInService,
+    private slideInRef: IxSlideInRef<AcmednsFormComponent>,
     private errorHandler: FormErrorHandlerService,
     private cdr: ChangeDetectorRef,
     private ws: WebSocketService,
     private changeDetectorRef: ChangeDetectorRef,
+    @Inject(SLIDE_IN_DATA) private acmedns: DnsAuthenticator,
   ) {}
 
   ngOnInit(): void {
+    if (this.acmedns) {
+      this.editingAcmedns = this.acmedns;
+    }
+
     this.loadSchemas();
   }
 
@@ -130,16 +136,26 @@ export class AcmednsFormComponent implements OnInit {
     return { key: schema.key, variables };
   }
 
-  setAcmednsForEdit(acmedns: DnsAuthenticator): void {
-    this.editingAcmedns = acmedns;
-  }
-
   onAuthenticatorTypeChanged(event: DnsAuthenticatorType): void {
     this.dnsAuthenticatorList.forEach((auth) => {
       if (auth.key === event) {
-        auth.variables.forEach((variable) => this.form.controls.attributes.controls[variable].enable());
+        auth.variables.forEach((variable) => {
+          const formField = this.form.controls.attributes.controls[variable] as unknown as CustomUntypedFormField;
+          formField.enable();
+          if (!formField.hidden$) {
+            formField.hidden$ = new BehaviorSubject<boolean>(false);
+          }
+          formField.hidden$.next(false);
+        });
       } else {
-        auth.variables.forEach((variable) => this.form.controls.attributes.controls[variable].disable());
+        auth.variables.forEach((variable) => {
+          const formField = this.form.controls.attributes.controls[variable] as unknown as CustomUntypedFormField;
+          formField.disable();
+          if (!formField.hidden$) {
+            formField.hidden$ = new BehaviorSubject<boolean>(false);
+          }
+          formField.hidden$.next(true);
+        });
       }
     });
   }
@@ -174,7 +190,7 @@ export class AcmednsFormComponent implements OnInit {
     request$.pipe(untilDestroyed(this)).subscribe({
       next: () => {
         this.isLoading = false;
-        this.slideInService.close();
+        this.slideInRef.close(true);
       },
       error: (error) => {
         this.isLoading = false;

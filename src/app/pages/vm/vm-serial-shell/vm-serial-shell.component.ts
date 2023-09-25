@@ -3,7 +3,7 @@ import { ActivatedRoute } from '@angular/router';
 import { UntilDestroy, untilDestroyed } from '@ngneat/until-destroy';
 import { Observable, Subscriber } from 'rxjs';
 import { TerminalConfiguration } from 'app/interfaces/terminal.interface';
-import { ShellService } from 'app/services';
+import { ShellService } from 'app/services/shell.service';
 
 @UntilDestroy()
 @Component({
@@ -19,7 +19,7 @@ export class VmSerialShellComponent implements TerminalConfiguration {
   preInit(): Observable<void> {
     return new Observable<void>((subscriber: Subscriber<void>) => {
       this.aroute.params.pipe(untilDestroyed(this)).subscribe((params) => {
-        this.pk = params['pk'];
+        this.pk = params['pk'] as string;
         subscriber.next();
       });
     });

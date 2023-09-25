@@ -15,7 +15,8 @@ import { helptextSystemBootenv } from 'app/helptext/system/boot-env';
 import { UnusedDisk } from 'app/interfaces/storage.interface';
 import { EntityJobComponent } from 'app/modules/entity/entity-job/entity-job.component';
 import { FormErrorHandlerService } from 'app/modules/ix-forms/services/form-error-handler.service';
-import { DialogService, WebSocketService } from 'app/services';
+import { DialogService } from 'app/services/dialog.service';
+import { WebSocketService } from 'app/services/ws.service';
 
 @UntilDestroy()
 @Component({
@@ -31,7 +32,7 @@ export class BootPoolReplaceDialogComponent implements OnInit {
   });
 
   dev = {
-    fcName: 'dev',
+    fcName: 'dev' as const,
     label: this.translate.instant(helptextSystemBootenv.replace_name_placeholder),
     options: this.ws.call('disk.get_unused').pipe(
       map((unusedDisks) => {
@@ -74,13 +75,13 @@ export class BootPoolReplaceDialogComponent implements OnInit {
   }
 
   setupWarningForExportedPools(): void {
-    this.form.get(this.dev.fcName).valueChanges.pipe(untilDestroyed(this)).subscribe(
+    this.form.controls[this.dev.fcName].valueChanges.pipe(untilDestroyed(this)).subscribe(
       this.warnForExportedPools.bind(this),
     );
   }
 
-  warnForExportedPools(disk: string): void {
-    const unusedDisk = this.unusedDisks.find((unusedDisk) => unusedDisk.name === disk);
+  warnForExportedPools(diskName: string): void {
+    const unusedDisk = this.unusedDisks.find((disk) => disk.name === diskName);
     if (!unusedDisk?.exported_zpool) {
       return;
     }

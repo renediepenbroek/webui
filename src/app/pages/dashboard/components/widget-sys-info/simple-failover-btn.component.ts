@@ -5,7 +5,7 @@ import { Router } from '@angular/router';
 import { UntilDestroy, untilDestroyed } from '@ngneat/until-destroy';
 import { filter } from 'rxjs/operators';
 import { helptextSystemFailover } from 'app/helptext/system/failover';
-import { DialogService } from 'app/services';
+import { DialogService } from 'app/services/dialog.service';
 
 @UntilDestroy()
 @Component({
@@ -26,7 +26,7 @@ export class SimpleFailoverBtnComponent {
     this.dialog.confirm({
       title: helptextSystemFailover.dialog_initiate_failover_title,
       message: helptextSystemFailover.dialog_initiate_failover_message,
-      buttonMsg: helptextSystemFailover.dialog_initiate_action,
+      buttonText: helptextSystemFailover.dialog_initiate_action,
     }).pipe(
       filter(Boolean),
       untilDestroyed(this),

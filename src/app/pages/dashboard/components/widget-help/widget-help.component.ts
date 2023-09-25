@@ -6,7 +6,7 @@ import { ProductType, productTypeLabels } from 'app/enums/product-type.enum';
 import { ScreenType } from 'app/enums/screen-type.enum';
 import helptext from 'app/helptext/about';
 import { WidgetComponent } from 'app/pages/dashboard/components/widget/widget.component';
-import { SystemGeneralService } from 'app/services';
+import { SystemGeneralService } from 'app/services/system-general.service';
 
 @UntilDestroy()
 @Component({
@@ -33,8 +33,8 @@ export class WidgetHelpComponent extends WidgetComponent implements OnInit {
   ) {
     super(translate);
 
-    mediaObserver.media$.pipe(untilDestroyed(this)).subscribe((evt) => {
-      const currentScreenType = evt.mqAlias === 'xs' ? ScreenType.Mobile : ScreenType.Desktop;
+    mediaObserver.asObservable().pipe(untilDestroyed(this)).subscribe((changes) => {
+      const currentScreenType = changes[0].mqAlias === 'xs' ? ScreenType.Mobile : ScreenType.Desktop;
       this.screenType = currentScreenType;
     });
   }

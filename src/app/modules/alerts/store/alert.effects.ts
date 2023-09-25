@@ -2,29 +2,35 @@ import { Injectable } from '@angular/core';
 import { Actions, createEffect, ofType } from '@ngrx/effects';
 import { Store } from '@ngrx/store';
 import { TranslateService } from '@ngx-translate/core';
-import { forkJoin, of } from 'rxjs';
 import {
-  catchError, filter, map, mergeMap, pairwise, switchMap, withLatestFrom,
+  EMPTY, forkJoin, of,
+} from 'rxjs';
+import {
+  catchError, map, mergeMap, pairwise, switchMap, withLatestFrom,
 } from 'rxjs/operators';
-import { ApiEventMessage } from 'app/enums/api-event-message.enum';
+import { IncomingApiMessageType } from 'app/enums/api-message-type.enum';
 import {
   dismissAlertPressed, dismissAllAlertsPressed,
   reopenAlertPressed,
   reopenAllAlertsPressed,
-  alertAdded,
-  alertChanged,
   alertRemoved,
-  alertsLoaded,
   alertsNotLoaded,
+  alertReceivedWhenPanelIsOpen,
+  alertAdded,
+  alertsLoaded,
+  alertChanged,
 } from 'app/modules/alerts/store/alert.actions';
-import { AlertSlice, selectDismissedAlerts, selectUnreadAlerts } from 'app/modules/alerts/store/alert.selectors';
-import { WebSocketService } from 'app/services';
+import {
+  AlertSlice, selectDismissedAlerts, selectIsAlertPanelOpen, selectUnreadAlerts,
+} from 'app/modules/alerts/store/alert.selectors';
+import { WebSocketService } from 'app/services/ws.service';
 import { adminUiInitialized } from 'app/store/admin-panel/admin.actions';
+import { alertIndicatorPressed } from 'app/store/topbar/topbar.actions';
 
 @Injectable()
 export class AlertEffects {
   loadAlerts$ = createEffect(() => this.actions$.pipe(
-    ofType(adminUiInitialized),
+    ofType(adminUiInitialized, alertIndicatorPressed, alertReceivedWhenPanelIsOpen),
     switchMap(() => {
       return this.ws.call('alert.list').pipe(
         map((alerts) => alertsLoaded({ alerts })),
@@ -39,35 +45,35 @@ export class AlertEffects {
     }),
   ));
 
-  // TODO: Two types of subscription need to be refactored into one in WebSocketService.
   subscribeToUpdates$ = createEffect(() => this.actions$.pipe(
     ofType(adminUiInitialized),
     switchMap(() => {
       return this.ws.subscribe('alert.list').pipe(
-        filter((event) => !(event.msg === ApiEventMessage.Changed && event.cleared)),
-        map((event) => {
-          switch (event.msg) {
-            case ApiEventMessage.Added:
-              return alertAdded({ alert: event.fields });
-            case ApiEventMessage.Changed:
-              return alertChanged({ alert: event.fields });
-          }
+        switchMap((event) => {
+          return this.store$.select(selectIsAlertPanelOpen).pipe(
+            switchMap((isAlertsPanelOpen) => {
+              switch (true) {
+                case [
+                  IncomingApiMessageType.Added, IncomingApiMessageType.Changed,
+                ].includes(event.msg) && isAlertsPanelOpen:
+                  return of(alertReceivedWhenPanelIsOpen());
+                case event.msg === IncomingApiMessageType.Added && !isAlertsPanelOpen:
+                  return of(alertAdded({ alert: event.fields }));
+                case event.msg === IncomingApiMessageType.Changed && !isAlertsPanelOpen:
+                  return of(alertChanged({ alert: event.fields }));
+                case event.msg === IncomingApiMessageType.Removed:
+                  return of(alertRemoved({ id: event.id.toString() }));
+                default:
+                  return EMPTY;
+              }
+            }),
+          );
         }),
       );
     }),
   ));
 
-  subscribeToRemoval$ = createEffect(() => this.actions$.pipe(
-    ofType(adminUiInitialized),
-    switchMap(() => {
-      return this.ws.sub('alert.list').pipe(
-        filter((event) => event.msg === ApiEventMessage.Changed && event.cleared),
-        map((event) => alertRemoved({ id: event.id })),
-      );
-    }),
-  ));
-
-  // TODO: Action errors are not handled. Standartize on how to report on errors and show them.
+  // TODO: Action errors are not handled. Standardize on how to report on errors and show them.
   dismissAlert$ = createEffect(() => this.actions$.pipe(
     ofType(dismissAlertPressed),
     mergeMap(({ id }) => {

@@ -11,13 +11,13 @@ import { waitForPreferences } from 'app/store/preferences/preferences.selectors'
 import { selectTimezone } from 'app/store/system-config/system-config.selectors';
 
 @UntilDestroy()
-@Injectable()
+@Injectable({ providedIn: 'root' })
 export class LocaleService {
   t24 = T('(24 Hours)');
   timezone: string;
   dateFormat = 'yyyy-MM-dd';
   timeFormat = 'HH:mm:ss';
-  target: Subject<CoreEvent> = new Subject();
+  target = new Subject<CoreEvent>();
 
   constructor(
     private store$: Store<AppState>,
@@ -68,37 +68,31 @@ export class LocaleService {
     ];
   }
 
-  formatDateTime(date: Date | number, tz?: string): string {
-    if (tz) {
-      date = utcToZonedTime(date.valueOf(), tz);
-    } else if (this.timezone) {
-      date = utcToZonedTime(date.valueOf(), this.timezone);
-    }
-
-    return format(date, `${this.dateFormat} ${this.timeFormat}`);
-  }
-
   formatDateTimeWithNoTz(date: Date): string {
     try {
       return format(date.valueOf(), `${this.dateFormat} ${this.timeFormat}`);
-    } catch (error: unknown) {
+    } catch {
       return 'Invalid date';
     }
   }
 
   getTimeOnly(date: Date | number, seconds = true, tz?: string): string {
-    if (tz) {
-      date = utcToZonedTime(date.valueOf(), tz);
-    } else if (this.timezone) {
-      date = utcToZonedTime(date.valueOf(), this.timezone);
-    }
-    let formatStr: string;
-    formatStr = this.timeFormat;
-    if (!seconds) {
-      formatStr = formatStr.replace(':ss', '');
-    }
+    try {
+      if (tz) {
+        date = utcToZonedTime(date.valueOf(), tz);
+      } else if (this.timezone) {
+        date = utcToZonedTime(date.valueOf(), this.timezone);
+      }
+      let formatStr: string;
+      formatStr = this.timeFormat;
+      if (!seconds) {
+        formatStr = formatStr.replace(':ss', '');
+      }
 
-    return format(date, formatStr);
+      return format(date, formatStr);
+    } catch {
+      return 'Invalid date';
+    }
   }
 
   getPreferredDateFormat(): string {
@@ -119,8 +113,8 @@ export class LocaleService {
     return [format(date, `${this.dateFormat}`), format(date, `${this.timeFormat}`)];
   }
 
-  formatDateTimeToDateFns(format: string): string {
-    let dateFnsFormat = format
+  formatDateTimeToDateFns(dateTimeFormat: string): string {
+    let dateFnsFormat = dateTimeFormat
       .replace('YYYY', 'yyyy')
       .replace('YY', 'y')
       .replace('DD', 'dd')
@@ -130,25 +124,5 @@ export class LocaleService {
       dateFnsFormat = dateFnsFormat.replace(' a', ' aaaaa\'m\'');
     }
     return dateFnsFormat;
-  }
-
-  getPreferredDateFormatForChart(): string {
-    return this.formatDateTimeToChart(this.dateFormat);
-  }
-
-  getPreferredTimeFormatForChart(): string {
-    return this.formatDateTimeToChart(this.timeFormat);
-  }
-
-  /** Revert DateFns for Chart DateTime format */
-  formatDateTimeToChart(format: string): string {
-    const dateFormat = format
-      .replace('yyyy', 'YYYY')
-      .replace('y', 'YY')
-      .replace('dd', 'DD')
-      .replace('d', 'D')
-      .replace(' aaaaa\'m\'', ' a')
-      .replace(' aa', ' A');
-    return dateFormat;
   }
 }

@@ -1,5 +1,5 @@
 import {
-  Component, Input, ElementRef, OnChanges,
+  Component, ElementRef, OnInit, ChangeDetectionStrategy, ChangeDetectorRef,
 } from '@angular/core';
 import { MediaObserver } from '@angular/flex-layout';
 import {
@@ -7,20 +7,24 @@ import {
 } from '@angular/platform-browser';
 import { Router } from '@angular/router';
 import { UntilDestroy, untilDestroyed } from '@ngneat/until-destroy';
+import { Store } from '@ngrx/store';
 import { TranslateService } from '@ngx-translate/core';
-import { UUID } from 'angular2-uuid';
-import { Chart, ChartColor, ChartDataSets } from 'chart.js';
-import { Subject, Subscription } from 'rxjs';
 import {
-  filter, map, throttleTime,
-} from 'rxjs/operators';
+  Chart, Color, ChartDataset, ChartOptions,
+} from 'chart.js';
+import { ChartConfiguration } from 'chart.js/dist/types';
+import { throttleTime } from 'rxjs/operators';
+import { GiB } from 'app/constants/bytes.constant';
 import { ThemeUtils } from 'app/core/classes/theme-utils/theme-utils';
 import { ScreenType } from 'app/enums/screen-type.enum';
-import { CoreEvent } from 'app/interfaces/events';
 import { MemoryStatsEventData } from 'app/interfaces/events/memory-stats-event.interface';
 import { WidgetComponent } from 'app/pages/dashboard/components/widget/widget.component';
 import { WidgetMemoryData } from 'app/pages/dashboard/interfaces/widget-data.interface';
+import { ResourcesUsageStore } from 'app/pages/dashboard/store/resources-usage-store.service';
+import { deepCloneState } from 'app/pages/dashboard/utils/deep-clone-state.helper';
 import { ThemeService } from 'app/services/theme/theme.service';
+import { AppState } from 'app/store';
+import { waitForSystemInfo } from 'app/store/system-info/system-info.selectors';
 
 @UntilDestroy()
 @Component({
@@ -30,34 +34,22 @@ import { ThemeService } from 'app/services/theme/theme.service';
     '../widget/widget.component.scss',
     './widget-memory.component.scss',
   ],
+  changeDetection: ChangeDetectionStrategy.OnPush,
 })
-export class WidgetMemoryComponent extends WidgetComponent implements OnChanges {
-  @Input() data: Subject<CoreEvent>;
-  @Input() ecc = false;
+export class WidgetMemoryComponent extends WidgetComponent implements OnInit {
+  protected ecc = false;
 
-  chart: Chart;// chart instance
+  chart: Chart<'doughnut'>;
   isReady = false;
-  title: string = this.translate.instant('Memory');
   subtitle: string = this.translate.instant('% of all cores');
-  configurable = false;
-  chartId = UUID.UUID();
   colorPattern: string[];
   labels: string[] = [this.translate.instant('Free'), this.translate.instant('ZFS Cache'), this.translate.instant('Services')];
   screenType = ScreenType.Desktop;
+  memData: WidgetMemoryData;
 
   readonly ScreenType = ScreenType;
 
-  private _memData: WidgetMemoryData;
   private utils: ThemeUtils;
-  private dataSubscription: Subscription;
-
-  get memData(): WidgetMemoryData {
-    return this._memData;
-  }
-
-  set memData(value) {
-    this._memData = value;
-  }
 
   constructor(
     public router: Router,
@@ -66,68 +58,56 @@ export class WidgetMemoryComponent extends WidgetComponent implements OnChanges 
     public mediaObserver: MediaObserver,
     private el: ElementRef<HTMLElement>,
     public themeService: ThemeService,
+    private store$: Store<AppState>,
+    private cdr: ChangeDetectorRef,
+    private resourcesUsageStore$: ResourcesUsageStore,
   ) {
     super(translate);
 
     this.utils = new ThemeUtils();
 
-    mediaObserver.media$.pipe(untilDestroyed(this)).subscribe((evt) => {
-      const currentScreenType = evt.mqAlias === 'xs' ? ScreenType.Mobile : ScreenType.Desktop;
+    mediaObserver.asObservable().pipe(untilDestroyed(this)).subscribe((changes) => {
+      const currentScreenType = changes[0].mqAlias === 'xs' ? ScreenType.Mobile : ScreenType.Desktop;
       this.screenType = currentScreenType;
     });
   }
 
-  ngOnChanges(): void {
-    if (!this.data) {
-      return;
-    }
+  ngOnInit(): void {
+    this.store$.pipe(waitForSystemInfo, untilDestroyed(this)).subscribe({
+      next: (sysInfo) => {
+        this.ecc = sysInfo.ecc_memory;
+        this.cdr.markForCheck();
+      },
+    });
 
-    this.dataSubscription?.unsubscribe();
-    this.dataSubscription = this.data.pipe(
-      filter((evt) => evt.name === 'MemoryStats'),
-      map((evt) => evt.data as MemoryStatsEventData),
+    this.resourcesUsageStore$.virtualMemoryUsage$.pipe(
       throttleTime(500),
+      deepCloneState(),
       untilDestroyed(this),
-    ).subscribe((data: MemoryStatsEventData) => {
-      if (!data.used) {
-        return;
-      }
-
-      this.setMemData(data);
-      this.renderChart();
+    ).subscribe({
+      next: (update) => {
+        if (!update?.used) {
+          return;
+        }
+        this.setMemData(update);
+        this.renderChart();
+        this.cdr.markForCheck();
+      },
     });
   }
 
   bytesToGigabytes(value: number): number {
-    return value / 1024 / 1024 / 1024;
+    return value / GiB;
   }
 
   parseMemData(data: MemoryStatsEventData): string[][] {
-    /*
-     * PROVIDED BY MIDDLEWARE
-     * total
-     * available
-     * percent
-     * used
-     * free
-     * active
-     * inactive
-     * buffers
-     * cached
-     * shared
-     * wired
-     * zfs_cache?
-     * */
+    const services = data.total - data.free - data.arc_size;
 
-    const services = data['total'] - data['free'] - data['arc_size'];
-
-    const columns = [
-      ['Free', this.bytesToGigabytes(data['free']).toFixed(1)],
-      ['ZFS Cache', this.bytesToGigabytes(data['arc_size']).toFixed(1)],
-      ['Services', this.bytesToGigabytes(services).toFixed(1)],
+    return [
+      [this.translate.instant('Free'), this.bytesToGigabytes(data.free).toFixed(1)],
+      [this.translate.instant('ZFS Cache'), this.bytesToGigabytes(data.arc_size).toFixed(1)],
+      [this.translate.instant('Services'), this.bytesToGigabytes(services).toFixed(1)],
     ];
-
-    return columns;
   }
 
   setMemData(data: MemoryStatsEventData): void {
@@ -156,62 +136,59 @@ export class WidgetMemoryComponent extends WidgetComponent implements OnChanges 
       this.updateChart(this.chart);
     }
   }
-  initChart(): Chart {
+  initChart(): Chart<'doughnut'> {
     const el: HTMLCanvasElement = this.el.nativeElement.querySelector('#memory-usage-chart canvas');
     if (!el) {
-      return;
+      return undefined;
     }
 
-    const ds = this.makeDatasets(this.memData.data);
+    const datasets = this.makeDatasets(this.memData.data);
 
     const data = {
+      datasets,
       labels: this.labels,
-      datasets: ds,
     };
 
-    const options = {
-      // cutoutPercentage:85,
-      tooltips: {
-        enabled: false,
+    const options: ChartOptions<'doughnut'> = {
+      cutout: '50%',
+      plugins: {
+        tooltip: {
+          enabled: false,
+        },
+        legend: {
+          display: false,
+        },
       },
       responsive: true,
       maintainAspectRatio: false,
-      legend: {
-        display: false,
-      },
-      responsiveAnimationDuration: 0,
       animation: {
         duration: 1000,
         animateRotate: true,
         animateScale: true,
       },
-      hover: {
-        animationDuration: 0,
-      },
     };
 
-    const chart = new Chart(el.getContext('2d'), {
+    return new Chart(el.getContext('2d'), {
       type: 'doughnut',
       data,
       options,
-    });
-    return chart;
+    } as ChartConfiguration<'doughnut'>);
   }
 
-  updateChart(chart: Chart): void {
+  updateChart(chart: Chart<'doughnut'>): void {
     const ds = this.makeDatasets(this.memData.data);
 
-    chart.data.datasets[0].data = ds[0].data;
+    chart.data.datasets[0].data = ds[0].data as number[];
     chart.update();
 
     this.chart = chart;
   }
 
-  protected makeDatasets(data: string[][]): ChartDataSets[] {
-    const datasets: ChartDataSets[] = [];
+  protected makeDatasets(data: string[][]): ChartDataset[] {
+    const datasets: ChartDataset[] = [];
 
-    const ds: ChartDataSets = {
-      label: this.labels as any,
+    const ds: ChartDataset<'doughnut'> = {
+      label: String(this.labels),
       data: data.map((x) => Number(x[1])),
       backgroundColor: [],
       borderColor: [],
@@ -222,8 +199,8 @@ export class WidgetMemoryComponent extends WidgetComponent implements OnChanges 
     data.forEach((item, index) => {
       const bgRgb = this.themeService.getRgbBackgroundColorByIndex(index);
 
-      (ds.backgroundColor as ChartColor[]).push(this.utils.rgbToString(bgRgb, 0.85));
-      (ds.borderColor as ChartColor[]).push(this.utils.rgbToString(bgRgb));
+      (ds.backgroundColor as Color[]).push(this.utils.rgbToString(bgRgb, 0.85));
+      (ds.borderColor as Color[]).push(this.utils.rgbToString(bgRgb));
     });
 
     datasets.push(ds);

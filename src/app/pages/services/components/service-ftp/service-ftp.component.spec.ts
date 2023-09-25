@@ -6,11 +6,15 @@ import { createRoutingFactory, mockProvider, Spectator } from '@ngneat/spectator
 import { of } from 'rxjs';
 import { mockCall, mockWebsocket } from 'app/core/testing/utils/mock-websocket.utils';
 import { FtpConfig } from 'app/interfaces/ftp-config.interface';
+import { IxSlideInRef } from 'app/modules/ix-forms/components/ix-slide-in/ix-slide-in-ref';
+import { SLIDE_IN_DATA } from 'app/modules/ix-forms/components/ix-slide-in/ix-slide-in.token';
 import { IxFormsModule } from 'app/modules/ix-forms/ix-forms.module';
 import { IxFormHarness } from 'app/modules/ix-forms/testing/ix-form.harness';
 import { ServiceFtpComponent } from 'app/pages/services/components/service-ftp/service-ftp.component';
-import { DialogService, SystemGeneralService, WebSocketService } from 'app/services';
+import { DialogService } from 'app/services/dialog.service';
 import { FilesystemService } from 'app/services/filesystem.service';
+import { SystemGeneralService } from 'app/services/system-general.service';
+import { WebSocketService } from 'app/services/ws.service';
 
 describe('ServiceFtpComponent', () => {
   let spectator: Spectator<ServiceFtpComponent>;
@@ -19,7 +23,7 @@ describe('ServiceFtpComponent', () => {
   const existingFtpConfig = {
     anonpath: '/mnt/x',
     anonuserbw: 3145728,
-    anonuserdlbw: 4194304,
+    anonuserdlbw: 5120,
     banner: 'Welcome',
     clients: 5,
     defaultroot: true,
@@ -53,7 +57,6 @@ describe('ServiceFtpComponent', () => {
     tls_opt_enable_diags: false,
     tls_opt_export_cert_data: true,
     tls_opt_ip_address_required: false,
-    tls_opt_no_cert_request: true,
     tls_opt_no_empty_fragments: false,
     tls_opt_no_session_reuse_required: false,
     tls_opt_stdenvvars: true,
@@ -87,6 +90,8 @@ describe('ServiceFtpComponent', () => {
       mockProvider(DialogService, {
         confirm: jest.fn(() => of(true)),
       }),
+      mockProvider(IxSlideInRef),
+      { provide: SLIDE_IN_DATA, useValue: undefined },
     ],
   });
 
@@ -142,7 +147,6 @@ describe('ServiceFtpComponent', () => {
       'TLS Common Name Required': true,
       'TLS Enable Diagnostics': false,
       'TLS Export Certificate Data': true,
-      'TLS No Certificate Request': true,
       'TLS No Empty Fragments': false,
       'TLS No Session Reuse Required': false,
       'TLS Export Standard Vars': true,
@@ -157,11 +161,10 @@ describe('ServiceFtpComponent', () => {
       'Masquerade Address': '192.168.1.110',
       'Display Login': 'Welcome',
       'Auxiliary Parameters': '--test=value',
-
-      'Local User Upload Bandwidth: (Examples: 500 KiB, 500M, 2 TB)': '1 MiB',
-      'Local User Download Bandwidth': '2 MiB',
-      'Anonymous User Upload Bandwidth': '3 MiB',
-      'Anonymous User Download Bandwidth': '4 MiB',
+      'Local User Upload Bandwidth: (Examples: 500 KiB, 500M, 2 TB)': '1 GiB',
+      'Local User Download Bandwidth': '2 GiB',
+      'Anonymous User Upload Bandwidth': '3 GiB',
+      'Anonymous User Download Bandwidth': '5 MiB',
     });
   });
 
@@ -180,7 +183,7 @@ describe('ServiceFtpComponent', () => {
     expect(spectator.inject(WebSocketService).call).toHaveBeenCalledWith('ftp.update', [{
       ...existingFtpConfig,
       tls_opt_ip_address_required: true,
-      anonuserdlbw: 5242880,
+      anonuserdlbw: 5,
     }]);
   });
 
@@ -201,7 +204,6 @@ describe('ServiceFtpComponent', () => {
       'TLS Common Name Required',
       'TLS Enable Diagnostics',
       'TLS Export Certificate Data',
-      'TLS No Certificate Request',
       'TLS No Empty Fragments',
       'TLS No Session Reuse Required',
       'TLS Export Standard Vars',

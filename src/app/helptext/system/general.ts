@@ -40,7 +40,7 @@ export const helptextSystemGeneral = {
       'Allow configuring a non-standard port to access the GUI\
  over <i>HTTP</i>. Changing this setting might require\
  changing a <a\
- href="https://www.redbrick.dcu.ie/~d_fens/articles/Firefox:_This_Address_is_Restricted"\
+ href="https://support.mozilla.org/en-US/kb/connection-settings-firefox"\
  target="_blank">Firefox configuration setting</a>.',
     ),
   },
@@ -97,17 +97,6 @@ export const helptextSystemGeneral = {
   time_format: {
     placeholder: T('Time Format'),
     tooltip: T('Choose a time format.'),
-  },
-
-  secretseed: {
-    placeholder: T('Export Password Secret Seed'),
-  },
-
-  crash_reporting: {
-    label: T('Crash reporting'),
-    tooltip: T('Send failed HTTP request data which can include client\
- and server IP addresses, failed method call tracebacks, and\
- middleware log file contents to iXsystems.'),
   },
 
   usage_collection: {
@@ -170,9 +159,4 @@ export const helptextSystemGeneral = {
   guiTitle: T('GUI'),
   guiPageTitle: T('GUI Settings'),
   ntpTitle: T('NTP Servers'),
-  supportTitle: T('Support'),
-  deleteServer: {
-    title: T('Delete Server'),
-    message: T('Delete'),
-  },
 };

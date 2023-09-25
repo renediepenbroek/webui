@@ -1,5 +1,5 @@
 import {
-  ChangeDetectionStrategy, Component, Inject, OnInit,
+  ChangeDetectionStrategy, ChangeDetectorRef, Component, Inject, OnInit,
 } from '@angular/core';
 import { FormBuilder, Validators } from '@angular/forms';
 import { MatDialog, MAT_DIALOG_DATA, MatDialogRef } from '@angular/material/dialog';
@@ -12,7 +12,8 @@ import { Option } from 'app/interfaces/option.interface';
 import { UnusedDisk } from 'app/interfaces/storage.interface';
 import { EntityJobComponent } from 'app/modules/entity/entity-job/entity-job.component';
 import { SnackbarService } from 'app/modules/snackbar/services/snackbar.service';
-import { DialogService, WebSocketService } from 'app/services';
+import { DialogService } from 'app/services/dialog.service';
+import { WebSocketService } from 'app/services/ws.service';
 
 export interface ReplaceDiskDialogData {
   diskName: string;
@@ -34,7 +35,7 @@ export class ReplaceDiskDialogComponent implements OnInit {
 
   unusedDisks: UnusedDisk[] = [];
 
-  unusedDisksOptions$: Observable<Option[]> = of([]);
+  unusedDisksOptions$: Observable<Option[]>;
 
   readonly helptext = helptext;
 
@@ -47,6 +48,7 @@ export class ReplaceDiskDialogComponent implements OnInit {
     private snackbar: SnackbarService,
     @Inject(MAT_DIALOG_DATA) public data: ReplaceDiskDialogData,
     private dialogService: DialogService,
+    private cdr: ChangeDetectorRef,
   ) {}
 
   ngOnInit(): void {
@@ -67,17 +69,18 @@ export class ReplaceDiskDialogComponent implements OnInit {
         };
       });
       this.unusedDisksOptions$ = of(unusedDiskOptions);
+      this.cdr.markForCheck();
     });
   }
 
   setupExportedPoolWarning(): void {
-    this.form.get('replacement').valueChanges.pipe(untilDestroyed(this)).subscribe(
+    this.form.controls.replacement.valueChanges.pipe(untilDestroyed(this)).subscribe(
       this.warnAboutExportedPool.bind(this),
     );
   }
 
   warnAboutExportedPool(diskIdentifier: string): void {
-    const unusedDisk = this.unusedDisks.find((unusedDisk) => unusedDisk.identifier === diskIdentifier);
+    const unusedDisk = this.unusedDisks.find((disk) => disk.identifier === diskIdentifier);
     if (!unusedDisk?.exported_zpool) {
       return;
     }

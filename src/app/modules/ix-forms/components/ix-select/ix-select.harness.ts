@@ -1,6 +1,7 @@
 import { ComponentHarness, HarnessPredicate, parallel } from '@angular/cdk/testing';
-import { MatSelectHarness, SelectHarnessFilters } from '@angular/material/select/testing';
+import { SelectHarnessFilters } from '@angular/material/select/testing';
 import { IxLabelHarness } from 'app/modules/ix-forms/components/ix-label/ix-label.harness';
+import { SelectHarness } from 'app/modules/ix-forms/components/ix-select/select.harness';
 import { IxFormControlHarness } from 'app/modules/ix-forms/interfaces/ix-form-control-harness.interface';
 import { getErrorText } from 'app/modules/ix-forms/utils/harness.utils';
 
@@ -17,7 +18,7 @@ export class IxSelectHarness extends ComponentHarness implements IxFormControlHa
         (harness, label) => HarnessPredicate.stringMatches(harness.getLabelText(), label));
   }
 
-  getSelectHarness = this.locatorFor(MatSelectHarness);
+  getSelectHarness = this.locatorFor(SelectHarness);
   getErrorText = getErrorText;
 
   async getLabelText(): Promise<string> {
@@ -49,6 +50,10 @@ export class IxSelectHarness extends ComponentHarness implements IxFormControlHa
     const select = (await this.getSelectHarness());
     await select.open();
 
+    if (!await this.hasOptions(newLabels)) {
+      throw new Error(`Option with label "${String(newLabels)}" not found in select ${await this.getLabelText()}`);
+    }
+
     if (await select.isMultiple()) {
       // Unselect old options manually
       if (!(await select.isEmpty())) {
@@ -76,5 +81,11 @@ export class IxSelectHarness extends ComponentHarness implements IxFormControlHa
     const options = await matSelect.getOptions();
 
     return parallel(() => options.map((option) => option.getText()));
+  }
+
+  async hasOptions(labels: string | string[]): Promise<boolean> {
+    const optionLabels = await this.getOptionLabels();
+    const labelsToCheck = Array.isArray(labels) ? labels : [labels];
+    return labelsToCheck.every((label) => optionLabels.includes(label));
   }
 }

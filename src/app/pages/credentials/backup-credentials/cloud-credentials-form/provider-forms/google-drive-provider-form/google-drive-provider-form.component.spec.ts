@@ -10,7 +10,7 @@ import {
 import {
   GoogleDriveProviderFormComponent,
 } from 'app/pages/credentials/backup-credentials/cloud-credentials-form/provider-forms/google-drive-provider-form/google-drive-provider-form.component';
-import { DialogService } from 'app/services';
+import { DialogService } from 'app/services/dialog.service';
 
 describe('GoogleDriveProviderFormComponent', () => {
   let spectator: Spectator<GoogleDriveProviderFormComponent>;
@@ -41,7 +41,7 @@ describe('GoogleDriveProviderFormComponent', () => {
   });
 
   it('show existing provider attributes when they are set as form values', async () => {
-    spectator.component.setValues({
+    spectator.component.getFormSetter$().next({
       client_id: 'client1234',
       client_secret: 'secret1234',
       token: 'token1234',

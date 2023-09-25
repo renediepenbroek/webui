@@ -2,7 +2,7 @@ import { HarnessLoader } from '@angular/cdk/testing';
 import { TestbedHarnessEnvironment } from '@angular/cdk/testing/testbed';
 import { ReactiveFormsModule } from '@angular/forms';
 import { MatButtonHarness } from '@angular/material/button/testing';
-import { MAT_DIALOG_DATA, MatDialogRef } from '@angular/material/dialog';
+import { MatDialogRef, MAT_DIALOG_DATA } from '@angular/material/dialog';
 import { createComponentFactory, mockProvider, Spectator } from '@ngneat/spectator/jest';
 import { of, throwError } from 'rxjs';
 import { MockWebsocketService } from 'app/core/testing/classes/mock-websocket.service';
@@ -14,7 +14,8 @@ import { IxCheckboxHarness } from 'app/modules/ix-forms/components/ix-checkbox/i
 import { IxInputHarness } from 'app/modules/ix-forms/components/ix-input/ix-input.harness';
 import { IxFormsModule } from 'app/modules/ix-forms/ix-forms.module';
 import { AppLoaderModule } from 'app/modules/loader/app-loader.module';
-import { DialogService, WebSocketService } from 'app/services';
+import { DialogService } from 'app/services/dialog.service';
+import { WebSocketService } from 'app/services/ws.service';
 import { DeleteDatasetDialogComponent } from './delete-dataset-dialog.component';
 
 describe('DeleteDatasetDialogComponent', () => {
@@ -138,8 +139,8 @@ describe('DeleteDatasetDialogComponent', () => {
   });
 
   it('asks to force delete a dataset if it cannot be deleted because device is busy', async () => {
-    const mockWebsocket = spectator.inject(MockWebsocketService);
-    jest.spyOn(mockWebsocket, 'call').mockImplementationOnce(() => throwError(() => ({
+    const websocketMock = spectator.inject(MockWebsocketService);
+    jest.spyOn(websocketMock, 'call').mockImplementationOnce(() => throwError(() => ({
       reason: 'Device busy',
     })));
 

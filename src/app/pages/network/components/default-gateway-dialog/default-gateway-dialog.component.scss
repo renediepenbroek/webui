@@ -1,4 +1,10 @@
-.mat-dialog-actions {
+.mat-mdc-dialog-actions {
   display: flex;
   justify-content: flex-end;
+}
+
+.list-item {
+  align-items: center;
+  column-gap: 8px;
+  display: flex;
 }

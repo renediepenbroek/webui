@@ -8,7 +8,8 @@ import { mockCall, mockWebsocket } from 'app/core/testing/utils/mock-websocket.u
 import { IxInputHarness } from 'app/modules/ix-forms/components/ix-input/ix-input.harness';
 import { IxFormsModule } from 'app/modules/ix-forms/ix-forms.module';
 import { AppLoaderModule } from 'app/modules/loader/app-loader.module';
-import { DialogService, WebSocketService } from 'app/services';
+import { DialogService } from 'app/services/dialog.service';
+import { WebSocketService } from 'app/services/ws.service';
 import { SnapshotCloneDialogComponent } from './snapshot-clone-dialog.component';
 
 describe('SnapshotCloneDialogComponent', () => {
@@ -41,7 +42,7 @@ describe('SnapshotCloneDialogComponent', () => {
 
   it('sets default value in dataset name input', async () => {
     const input = await loader.getHarness(IxInputHarness);
-    expect(await input.getValue()).toEqual('my-snapshot-clone');
+    expect(await input.getValue()).toBe('my-snapshot-clone');
   });
 
   it('clones snapshot to a dataset when form is submitted and shows a success message', async () => {

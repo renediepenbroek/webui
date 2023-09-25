@@ -14,7 +14,7 @@ import {
 import {
   UploadConfigDialogComponent,
 } from 'app/pages/system/general-settings/upload-config-dialog/upload-config-dialog.component';
-import { DialogService } from 'app/services';
+import { DialogService } from 'app/services/dialog.service';
 
 describe('ManageConfigurationMenuComponent', () => {
   let spectator: Spectator<ManageConfigurationMenuComponent>;
@@ -61,6 +61,6 @@ describe('ManageConfigurationMenuComponent', () => {
     await menu.clickItem({ text: 'Reset to Defaults' });
 
     expect(spectator.inject(DialogService).confirm).toHaveBeenCalled();
-    expect(spectator.inject(Router).navigate).toHaveBeenCalledWith(['/others/config-reset']);
+    expect(spectator.inject(Router).navigate).toHaveBeenCalledWith(['/others/config-reset'], { skipLocationChange: true });
   });
 });

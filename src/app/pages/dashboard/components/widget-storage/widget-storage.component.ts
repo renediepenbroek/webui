@@ -1,16 +1,20 @@
 import {
-  AfterViewInit, Component, Input, OnChanges, SimpleChanges,
+  AfterViewInit, Component,
 } from '@angular/core';
-import { Router } from '@angular/router';
-import { UntilDestroy } from '@ngneat/until-destroy';
+import { UntilDestroy, untilDestroyed } from '@ngneat/until-destroy';
 import { TranslateService } from '@ngx-translate/core';
 import filesize from 'filesize';
+import { filter, switchMap, tap } from 'rxjs';
+import { PoolScanFunction } from 'app/enums/pool-scan-function.enum';
+import { PoolScanState } from 'app/enums/pool-scan-state.enum';
 import { PoolStatus } from 'app/enums/pool-status.enum';
-import { TopologyItemType } from 'app/enums/v-dev-type.enum';
+import { countDisksTotal } from 'app/helpers/count-disks-total.helper';
 import { Pool } from 'app/interfaces/pool.interface';
 import { isTopologyDisk, TopologyItem } from 'app/interfaces/storage.interface';
 import { VolumesData } from 'app/interfaces/volume-data.interface';
 import { WidgetComponent } from 'app/pages/dashboard/components/widget/widget.component';
+import { DashboardStorageStore } from 'app/pages/dashboard/store/dashboard-storage-store.service';
+import { deepCloneState } from 'app/pages/dashboard/utils/deep-clone-state.helper';
 
 interface ItemInfo {
   icon: StatusIcon;
@@ -52,11 +56,10 @@ interface PoolInfoMap {
     './widget-storage.component.scss',
   ],
 })
-export class WidgetStorageComponent extends WidgetComponent implements AfterViewInit, OnChanges {
-  @Input() pools: Pool[];
-  @Input() volumeData: VolumesData;
+export class WidgetStorageComponent extends WidgetComponent implements AfterViewInit {
+  protected pools: Pool[];
+  protected volumeData: VolumesData;
 
-  title: string = this.translate.instant('Storage');
   poolInfoMap: PoolInfoMap = {};
   paddingTop = 7;
   paddingLeft = 7;
@@ -68,21 +71,66 @@ export class WidgetStorageComponent extends WidgetComponent implements AfterView
   contentHeight = 400 - 56;
   rowHeight = 150;
 
-  constructor(public router: Router, public translate: TranslateService) {
-    super(translate);
-    this.configurable = false;
+  getSubwidgetColumnWidth(pool: Pool): number {
+    const badStatus = [
+      PoolStatus.Locked,
+      PoolStatus.Unknown,
+      PoolStatus.Offline,
+      PoolStatus.Degraded,
+    ].includes(pool.status);
+
+    if (this.cols === 1 && !badStatus) {
+      return 31;
+    }
+
+    if (this.cols === 1 && badStatus) {
+      return 50;
+    }
+
+    return 100;
   }
 
-  ngOnChanges(changes: SimpleChanges): void {
-    if (changes.pools || changes.volumeData) {
-      this.updateGridInfo();
-      this.updatePoolInfoMap();
-    }
+  isScanResilver(pool: Pool): boolean {
+    return pool.scan?.function === PoolScanFunction.Resilver;
+  }
+
+  isScanInProgress(pool: Pool): boolean {
+    return pool.scan?.state === PoolScanState.Scanning;
+  }
+
+  isScanFinished(pool: Pool): boolean {
+    return pool.scan?.state === PoolScanState.Finished;
+  }
+
+  constructor(
+    public translate: TranslateService,
+    private dashboardStorageStore$: DashboardStorageStore,
+  ) {
+    super(translate);
   }
 
   ngAfterViewInit(): void {
-    this.updateGridInfo();
-    this.updatePoolInfoMap();
+    this.dashboardStorageStore$.isLoading$.pipe(
+      filter((isLoading) => !isLoading),
+      switchMap(() => this.dashboardStorageStore$.pools$.pipe(
+        deepCloneState(),
+        tap((pools: Pool[]) => {
+          this.pools = pools;
+        }),
+      )),
+      switchMap(() => this.dashboardStorageStore$.volumesData$.pipe(
+        deepCloneState(),
+        tap((volumesData) => {
+          this.volumeData = volumesData;
+        }),
+      )),
+      untilDestroyed(this),
+    ).subscribe({
+      next: () => {
+        this.updateGridInfo();
+        this.updatePoolInfoMap();
+      },
+    });
   }
 
   updateGridInfo(): void {
@@ -118,7 +166,7 @@ export class WidgetStorageComponent extends WidgetComponent implements AfterView
   updatePoolInfoMap(): void {
     this.pools.forEach((pool) => {
       this.poolInfoMap[pool.name] = {
-        totalDisks: this.totalDisks(pool),
+        totalDisks: this.getTotalDisks(pool),
         status: this.getStatusItemInfo(pool),
         freeSpace: this.getFreeSpace(pool),
         usedSpace: this.getUsedSpaceItemInfo(pool),
@@ -130,7 +178,7 @@ export class WidgetStorageComponent extends WidgetComponent implements AfterView
   getStatusItemInfo(pool: Pool): ItemInfo {
     let level = StatusLevel.Safe;
     let icon = StatusIcon.CheckCircle;
-    let value = pool.status;
+    let value: string = pool.status;
 
     switch (pool.status) {
       case PoolStatus.Online:
@@ -178,7 +226,7 @@ export class WidgetStorageComponent extends WidgetComponent implements AfterView
     let icon = StatusIcon.CheckCircle;
     let value;
 
-    if (!volume || !volume.used_pct) {
+    if (!volume?.used_pct) {
       value = this.translate.instant('Unknown');
       level = StatusLevel.Warn;
       icon = StatusIcon.Error;
@@ -214,7 +262,7 @@ export class WidgetStorageComponent extends WidgetComponent implements AfterView
     let icon = StatusIcon.Error;
     let value: string = this.translate.instant('Unknown');
 
-    if (pool && pool.topology) {
+    if (pool?.topology) {
       const unhealthy: string[] = []; // Disks with errors
       pool.topology.data.forEach((item: TopologyItem) => {
         if (isTopologyDisk(item)) {
@@ -244,7 +292,7 @@ export class WidgetStorageComponent extends WidgetComponent implements AfterView
       }
 
       if (this.cols > 1) {
-        value += ' of ' + this.totalDisks(pool);
+        value += ' of ' + this.getTotalDisks(pool);
       }
     }
 
@@ -255,17 +303,9 @@ export class WidgetStorageComponent extends WidgetComponent implements AfterView
     };
   }
 
-  totalDisks(pool: Pool): string {
-    if (pool && pool.topology) {
-      let total = 0;
-      pool.topology.data.forEach((item) => {
-        if (item.type === TopologyItemType.Disk) {
-          total++;
-        } else {
-          total += item.children.length;
-        }
-      });
-      return total.toString() + ' (data)';
+  getTotalDisks(pool: Pool): string {
+    if (pool?.topology) {
+      return countDisksTotal(pool.topology);
     }
 
     return this.translate.instant('Unknown');
@@ -273,22 +313,24 @@ export class WidgetStorageComponent extends WidgetComponent implements AfterView
 
   getFreeSpace(pool: Pool): string {
     const volume = this.volumeData[pool.name];
-    if (volume && volume.used_pct) {
+    if (volume?.used_pct) {
       if (Number.isNaN(volume.used) ? volume.used : filesize(volume.used, { exponent: 3 }) !== 'Locked') {
         return this.getSizeString(volume.avail);
       }
-    } else if (!volume || typeof volume.avail === undefined) {
-      return this.translate.instant('Unknown');
-    } else {
-      return this.translate.instant('Gathering data...');
+      return '';
     }
+    if (!volume || typeof volume.avail === undefined) {
+      return this.translate.instant('Unknown');
+    }
+
+    return this.translate.instant('Gathering data...');
   }
 
   getSizeString(volumeSize: number): string {
     let unit;
     let size;
     let displayValue = filesize(volumeSize, { standard: 'iec' });
-    if (displayValue.slice(-2) === ' B') {
+    if (displayValue.endsWith(' B')) {
       unit = displayValue.slice(-1);
       size = new Intl.NumberFormat().format(parseFloat(displayValue.slice(0, -2)));
     } else {

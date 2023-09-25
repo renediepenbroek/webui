@@ -3,25 +3,28 @@ import { TestbedHarnessEnvironment } from '@angular/cdk/testing/testbed';
 import { ReactiveFormsModule } from '@angular/forms';
 import { MatButtonHarness } from '@angular/material/button/testing';
 import { Router } from '@angular/router';
-import { createComponentFactory, mockProvider, Spectator } from '@ngneat/spectator/jest';
+import { createRoutingFactory, mockProvider, Spectator } from '@ngneat/spectator/jest';
 import { of } from 'rxjs';
 import { mockCall, mockWebsocket } from 'app/core/testing/utils/mock-websocket.utils';
 import { SmbConfig } from 'app/interfaces/smb-config.interface';
+import { IxSlideInRef } from 'app/modules/ix-forms/components/ix-slide-in/ix-slide-in-ref';
+import { SLIDE_IN_DATA } from 'app/modules/ix-forms/components/ix-slide-in/ix-slide-in.token';
 import { IxFormsModule } from 'app/modules/ix-forms/ix-forms.module';
 import { FormErrorHandlerService } from 'app/modules/ix-forms/services/form-error-handler.service';
 import { IxFormHarness } from 'app/modules/ix-forms/testing/ix-form.harness';
 import { ServiceSmbComponent } from 'app/pages/services/components/service-smb/service-smb.component';
-import {
-  DialogService, SystemGeneralService, UserService, WebSocketService,
-} from 'app/services';
+import { DialogService } from 'app/services/dialog.service';
 import { IxSlideInService } from 'app/services/ix-slide-in.service';
+import { SystemGeneralService } from 'app/services/system-general.service';
+import { UserService } from 'app/services/user.service';
+import { WebSocketService } from 'app/services/ws.service';
 
 describe('ServiceSmbComponent', () => {
   let spectator: Spectator<ServiceSmbComponent>;
   let loader: HarnessLoader;
   let ws: WebSocketService;
 
-  const createComponent = createComponentFactory({
+  const createComponent = createRoutingFactory({
     component: ServiceSmbComponent,
     imports: [
       IxFormsModule,
@@ -32,7 +35,6 @@ describe('ServiceSmbComponent', () => {
         mockCall('smb.config', {
           id: 1,
           netbiosname: 'truenas',
-          netbiosname_b: 'truenas-b',
           netbiosalias: [],
           workgroup: 'WORKGROUP',
           description: 'TrueNAS Server',
@@ -44,7 +46,6 @@ describe('ServiceSmbComponent', () => {
           guest: 'nobody',
           filemask: '',
           dirmask: '',
-          smb_options: '',
           bindip: [],
           cifs_SID: 'mockSid',
           ntlmv1_auth: false,
@@ -79,6 +80,8 @@ describe('ServiceSmbComponent', () => {
           username: 'test-username',
         }])),
       }),
+      mockProvider(IxSlideInRef),
+      { provide: SLIDE_IN_DATA, useValue: undefined },
     ],
   });
 
@@ -96,7 +99,6 @@ describe('ServiceSmbComponent', () => {
     expect(values).toEqual({
       'NetBIOS Name': 'truenas',
       'NetBIOS Alias': [],
-      'NetBIOS Name (TrueNAS Controller 2)': 'truenas-b',
       Workgroup: 'WORKGROUP',
       Description: 'TrueNAS Server',
       'Enable SMB1 support': false,
@@ -113,7 +115,6 @@ describe('ServiceSmbComponent', () => {
 
     expect(values).toEqual({
       'Administrators Group': '',
-      'Auxiliary Parameters': '',
       'Bind IP Addresses': [],
       Description: 'TrueNAS Server',
       'Directory Mask': '',
@@ -126,7 +127,7 @@ describe('ServiceSmbComponent', () => {
       'NTLMv1 Auth': false,
       'NetBIOS Alias': [],
       'NetBIOS Name': 'truenas',
-      'NetBIOS Name (TrueNAS Controller 2)': 'truenas-b',
+      Multichannel: false,
       'UNIX Charset': 'UTF-8',
       'Use Syslog Only': false,
       Workgroup: 'WORKGROUP',
@@ -166,8 +167,8 @@ describe('ServiceSmbComponent', () => {
       loglevel: 'MINIMUM',
       localmaster: true,
       syslog: false,
+      multichannel: false,
       unixcharset: 'UTF-8',
-      smb_options: '',
     }]);
   });
 
@@ -186,7 +187,6 @@ describe('ServiceSmbComponent', () => {
       'File Mask': '0666',
       'Directory Mask': '0777',
       'Bind IP Addresses': ['1.1.1.1', '2.2.2.2'],
-      'Auxiliary Parameters': 'new-params',
     });
 
     const saveButton = await loader.getHarness(MatButtonHarness.with({ text: 'Save' }));
@@ -211,8 +211,8 @@ describe('ServiceSmbComponent', () => {
       loglevel: 'FULL',
       localmaster: false,
       syslog: true,
+      multichannel: false,
       unixcharset: 'UTF-16',
-      smb_options: 'new-params',
     }]);
   });
 });

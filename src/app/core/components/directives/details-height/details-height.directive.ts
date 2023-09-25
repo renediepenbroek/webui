@@ -1,10 +1,12 @@
 import {
-  Directive, ElementRef, Inject, Input, OnChanges, OnDestroy, OnInit, SimpleChanges,
+  Directive, ElementRef, Inject, OnChanges, OnDestroy, OnInit,
 } from '@angular/core';
 import { UntilDestroy, untilDestroyed } from '@ngneat/until-destroy';
 import { Store } from '@ngrx/store';
 import { WINDOW } from 'app/helpers/window.helper';
-import { headerHeight, footerHeight } from 'app/modules/common/layouts/admin-layout/admin-layout.component.const';
+import { IxSimpleChanges } from 'app/interfaces/simple-changes.interface';
+import { headerHeight, footerHeight } from 'app/modules/layout/components/admin-layout/admin-layout.component.const';
+import { LayoutService } from 'app/services/layout.service';
 import { AppState } from 'app/store';
 import { waitForAdvancedConfig } from 'app/store/system-config/system-config.selectors';
 
@@ -18,8 +20,6 @@ import { waitForAdvancedConfig } from 'app/store/system-config/system-config.sel
   selector: '[ixDetailsHeight]',
 })
 export class IxDetailsHeightDirective implements OnInit, OnDestroy, OnChanges {
-  @Input('ixDetailsHeight') ixDetailsHeightParentClass: string;
-
   private hasConsoleFooter = false;
   private headerHeight = headerHeight;
   private footerHeight = footerHeight;
@@ -33,7 +33,8 @@ export class IxDetailsHeightDirective implements OnInit, OnDestroy, OnChanges {
 
   constructor(
     @Inject(WINDOW) private window: Window,
-    private element: ElementRef,
+    private element: ElementRef<HTMLElement>,
+    private layoutService: LayoutService,
     private store$: Store<AppState>,
   ) {}
 
@@ -47,9 +48,10 @@ export class IxDetailsHeightDirective implements OnInit, OnDestroy, OnChanges {
 
     this.element.nativeElement.style.height = this.heightCssValue;
     this.window.addEventListener('scroll', this.onScrollHandler, true);
+    setTimeout(() => this.onScroll());
   }
 
-  ngOnChanges(changes: SimpleChanges): void {
+  ngOnChanges(changes: IxSimpleChanges<this>): void {
     if ('hasConsoleFooter' in changes) {
       delete this.heightBaseOffset;
     }
@@ -60,7 +62,7 @@ export class IxDetailsHeightDirective implements OnInit, OnDestroy, OnChanges {
   }
 
   onScroll(): void {
-    const parentElement = this.getParentElement();
+    const parentElement = this.layoutService.getContentContainer();
 
     if (!this.parentPadding) {
       this.parentPadding = parseFloat(
@@ -87,14 +89,8 @@ export class IxDetailsHeightDirective implements OnInit, OnDestroy, OnChanges {
     this.element.nativeElement.style.height = this.heightCssValue;
   }
 
-  private getParentElement(): HTMLElement {
-    return this.window.document.getElementsByClassName(
-      this.ixDetailsHeightParentClass,
-    )[0] as HTMLElement;
-  }
-
   private getInitialTopPosition(element: HTMLElement): number {
-    return element.getBoundingClientRect().top;
+    return Math.floor(element.getBoundingClientRect().top);
   }
 
   private getBaseOffset(): number {
@@ -102,16 +98,14 @@ export class IxDetailsHeightDirective implements OnInit, OnDestroy, OnChanges {
     result += this.parentPadding;
     if (this.hasConsoleFooter) {
       result += this.footerHeight;
-    } else {
-      result += this.parentPadding;
     }
-    return result;
+    return Math.floor(result);
   }
 
   private getScrollBreakingPoint(): number {
     let result = this.getInitialTopPosition(this.element.nativeElement);
     result -= this.parentPadding;
     result -= this.headerHeight;
-    return result;
+    return Math.floor(result);
   }
 }

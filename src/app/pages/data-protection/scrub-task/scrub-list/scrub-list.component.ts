@@ -1,23 +1,21 @@
 import { Component } from '@angular/core';
 import { UntilDestroy, untilDestroyed } from '@ngneat/until-destroy';
-import { Store } from '@ngrx/store';
 import { TranslateService } from '@ngx-translate/core';
 import { ScrubTaskUi } from 'app/interfaces/scrub-task.interface';
-import { EntityFormService } from 'app/modules/entity/entity-form/services/entity-form.service';
 import { EntityTableComponent } from 'app/modules/entity/entity-table/entity-table.component';
 import { EntityTableAction, EntityTableConfig } from 'app/modules/entity/entity-table/entity-table.interface';
+import { scheduleToCrontab } from 'app/modules/scheduler/utils/schedule-to-crontab.utils';
 import {
   ScrubTaskFormComponent,
 } from 'app/pages/data-protection/scrub-task/scrub-task-form/scrub-task-form.component';
-import { UserService, TaskService } from 'app/services';
 import { IxSlideInService } from 'app/services/ix-slide-in.service';
-import { AppState } from 'app/store';
-import { selectTimezone } from 'app/store/system-config/system-config.selectors';
+import { TaskService } from 'app/services/task.service';
+import { UserService } from 'app/services/user.service';
 
 @UntilDestroy()
 @Component({
   template: '<ix-entity-table [title]="title" [conf]="this"></ix-entity-table>',
-  providers: [TaskService, UserService, EntityFormService],
+  providers: [TaskService, UserService],
 })
 export class ScrubListComponent implements EntityTableConfig {
   title = this.translate.instant('Scrub Tasks');
@@ -59,30 +57,25 @@ export class ScrubListComponent implements EntityTableConfig {
     protected taskService: TaskService,
     protected slideInService: IxSlideInService,
     protected translate: TranslateService,
-    private store$: Store<AppState>,
   ) {}
 
   afterInit(entityList: EntityTableComponent): void {
     this.entityList = entityList;
-    this.slideInService.onClose$.pipe(untilDestroyed(this)).subscribe(() => {
-      this.entityList.getData();
-    });
   }
 
   resourceTransformIncomingRestData(data: ScrubTaskUi[]): ScrubTaskUi[] {
     return data.map((task) => {
-      task.cron_schedule = `${task.schedule.minute} ${task.schedule.hour} ${task.schedule.dom} ${task.schedule.month} ${task.schedule.dow}`;
+      task.cron_schedule = scheduleToCrontab(task.schedule);
       task.frequency = this.taskService.getTaskCronDescription(task.cron_schedule);
-      this.store$.select(selectTimezone).pipe(untilDestroyed(this)).subscribe((timezone) => {
-        task.next_run = this.taskService.getTaskNextRun(task.cron_schedule, timezone);
-      });
+      task.next_run = this.taskService.getTaskNextRun(task.cron_schedule);
 
       return task;
     });
   }
 
   doAdd(): void {
-    this.slideInService.open(ScrubTaskFormComponent);
+    const slideInRef = this.slideInService.open(ScrubTaskFormComponent);
+    slideInRef.slideInClosed$.pipe(untilDestroyed(this)).subscribe(() => this.entityList.getData());
   }
 
   getActions(): EntityTableAction<ScrubTaskUi>[] {
@@ -91,8 +84,8 @@ export class ScrubListComponent implements EntityTableConfig {
       icon: 'edit',
       label: 'Edit',
       onClick: (row: ScrubTaskUi) => {
-        const slideIn = this.slideInService.open(ScrubTaskFormComponent);
-        slideIn.setTaskForEdit(row);
+        const slideInRef = this.slideInService.open(ScrubTaskFormComponent, { data: row });
+        slideInRef.slideInClosed$.pipe(untilDestroyed(this)).subscribe(() => this.entityList.getData());
       },
     }, {
       id: 'delete',

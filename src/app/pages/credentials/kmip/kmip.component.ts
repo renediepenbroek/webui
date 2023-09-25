@@ -6,14 +6,16 @@ import { MatDialog } from '@angular/material/dialog';
 import { UntilDestroy, untilDestroyed } from '@ngneat/until-destroy';
 import { TranslateService } from '@ngx-translate/core';
 import { forkJoin } from 'rxjs';
-import { idNameArrayToOptions } from 'app/helpers/options.helper';
+import { idNameArrayToOptions } from 'app/helpers/operators/options.operators';
 import { helptextSystemKmip } from 'app/helptext/system/kmip';
 import { KmipConfigUpdate } from 'app/interfaces/kmip-config.interface';
+import { WebsocketError } from 'app/interfaces/websocket-error.interface';
 import { EntityJobComponent } from 'app/modules/entity/entity-job/entity-job.component';
-import { EntityUtils } from 'app/modules/entity/utils';
-import { FormErrorHandlerService } from 'app/modules/ix-forms/services/form-error-handler.service';
 import { SnackbarService } from 'app/modules/snackbar/services/snackbar.service';
-import { DialogService, SystemGeneralService, WebSocketService } from 'app/services';
+import { DialogService } from 'app/services/dialog.service';
+import { ErrorHandlerService } from 'app/services/error-handler.service';
+import { SystemGeneralService } from 'app/services/system-general.service';
+import { WebSocketService } from 'app/services/ws.service';
 
 @UntilDestroy()
 @Component({
@@ -48,9 +50,9 @@ export class KmipComponent implements OnInit {
     private formBuilder: FormBuilder,
     private cdr: ChangeDetectorRef,
     private matDialog: MatDialog,
+    private errorHandler: ErrorHandlerService,
     private translate: TranslateService,
     private dialogService: DialogService,
-    private errorHandler: FormErrorHandlerService,
     private systemGeneralService: SystemGeneralService,
     private snackbar: SnackbarService,
   ) {}
@@ -70,8 +72,8 @@ export class KmipComponent implements OnInit {
         this.isLoading = false;
         this.cdr.markForCheck();
       },
-      error: (err) => {
-        new EntityUtils().handleWsError(this, err, this.dialogService);
+      error: (err: WebsocketError) => {
+        this.dialogService.error(this.errorHandler.parseWsError(err));
         this.isLoading = false;
         this.cdr.markForCheck();
       },
@@ -89,8 +91,8 @@ export class KmipComponent implements OnInit {
         this.isLoading = false;
         this.cdr.markForCheck();
       },
-      error: (err) => {
-        new EntityUtils().handleWsError(this, err, this.dialogService);
+      error: (err: WebsocketError) => {
+        this.dialogService.error(this.errorHandler.parseWsError(err));
         this.isLoading = false;
         this.cdr.markForCheck();
       },
@@ -125,9 +127,9 @@ export class KmipComponent implements OnInit {
           this.isLoading = false;
           this.cdr.markForCheck();
         },
-        error: (error) => {
+        error: (error: WebsocketError) => {
           this.isLoading = false;
-          new EntityUtils().handleWsError(this, error, this.dialogService);
+          this.dialogService.error(this.errorHandler.parseWsError(error));
           this.cdr.markForCheck();
         },
       });

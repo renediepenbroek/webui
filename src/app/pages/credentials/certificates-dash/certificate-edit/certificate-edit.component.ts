@@ -1,9 +1,16 @@
-import { ChangeDetectionStrategy, ChangeDetectorRef, Component } from '@angular/core';
-import { FormBuilder, Validators } from '@angular/forms';
+import {
+  ChangeDetectionStrategy, ChangeDetectorRef, Component, Inject, OnInit,
+} from '@angular/core';
+import {
+  FormBuilder, FormControl, FormGroup, Validators,
+} from '@angular/forms';
 import { MatDialog } from '@angular/material/dialog';
 import { UntilDestroy, untilDestroyed } from '@ngneat/until-destroy';
+import { filter } from 'rxjs/operators';
 import { helptextSystemCertificates } from 'app/helptext/system/certificates';
 import { Certificate } from 'app/interfaces/certificate.interface';
+import { IxSlideInRef } from 'app/modules/ix-forms/components/ix-slide-in/ix-slide-in-ref';
+import { SLIDE_IN_DATA } from 'app/modules/ix-forms/components/ix-slide-in/ix-slide-in.token';
 import { FormErrorHandlerService } from 'app/modules/ix-forms/services/form-error-handler.service';
 import {
   CertificateAcmeAddComponent,
@@ -23,12 +30,15 @@ import { WebSocketService } from 'app/services/ws.service';
   styleUrls: ['./certificate-edit.component.scss'],
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
-export class CertificateEditComponent {
+export class CertificateEditComponent implements OnInit {
   isLoading = false;
 
   form = this.formBuilder.group({
     name: ['', Validators.required],
-  });
+  }) as FormGroup<{
+    name: FormControl<string | null>;
+    renew_days?: FormControl<number | null>;
+  }>;
 
   certificate: Certificate;
 
@@ -39,18 +49,31 @@ export class CertificateEditComponent {
     private ws: WebSocketService,
     private cdr: ChangeDetectorRef,
     private slideInService: IxSlideInService,
+    private slideInRef: IxSlideInRef<CertificateEditComponent>,
     private errorHandler: FormErrorHandlerService,
     private matDialog: MatDialog,
+    @Inject(SLIDE_IN_DATA) private data: Certificate,
   ) {}
 
   get isCsr(): boolean {
     return this.certificate?.cert_type_CSR;
   }
 
-  setCertificate(certificate: Certificate): void {
-    this.certificate = certificate;
-    this.form.patchValue(certificate);
+  ngOnInit(): void {
+    this.setCertificate();
+    this.setRenewDaysForEditIfAvailable();
+  }
+
+  setCertificate(): void {
+    this.certificate = this.data;
+    this.form.patchValue(this.certificate);
     this.cdr.markForCheck();
+  }
+
+  setRenewDaysForEditIfAvailable(): void {
+    if (this.certificate?.acme) {
+      this.form.addControl('renew_days', new FormControl(null));
+    }
   }
 
   onViewCertificatePressed(): void {
@@ -74,21 +97,24 @@ export class CertificateEditComponent {
   }
 
   onCreateAcmePressed(): void {
-    this.slideInService.close();
-    const acmeForm = this.slideInService.open(CertificateAcmeAddComponent);
-    acmeForm.setCsr(this.certificate);
+    this.slideInRef.close(true);
+    const slideInRef = this.slideInService.open(CertificateAcmeAddComponent, { data: this.certificate });
+    slideInRef.slideInClosed$.pipe(
+      filter(Boolean),
+      untilDestroyed(this),
+    ).subscribe(() => this.slideInRef.close(true));
   }
 
   onSubmit(): void {
     this.isLoading = true;
 
-    this.ws.call('certificate.update', [this.certificate.id, this.form.value])
+    this.ws.job('certificate.update', [this.certificate.id, this.form.value])
       .pipe(untilDestroyed(this))
       .subscribe({
-        next: () => {
+        complete: () => {
           this.isLoading = false;
           this.cdr.markForCheck();
-          this.slideInService.close();
+          this.slideInRef.close(true);
         },
         error: (error) => {
           this.isLoading = false;

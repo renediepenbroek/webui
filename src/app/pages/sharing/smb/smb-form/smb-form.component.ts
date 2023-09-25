@@ -2,15 +2,18 @@ import {
   ChangeDetectionStrategy,
   ChangeDetectorRef,
   Component,
+  Inject,
   OnInit,
 } from '@angular/core';
-import { UntypedFormBuilder, Validators } from '@angular/forms';
+import { Validators, FormBuilder } from '@angular/forms';
 import { MatDialog } from '@angular/material/dialog';
 import { Router } from '@angular/router';
 import { UntilDestroy, untilDestroyed } from '@ngneat/until-destroy';
 import { TranslateService } from '@ngx-translate/core';
 import _ from 'lodash';
-import { noop, Observable, of } from 'rxjs';
+import {
+  forkJoin, noop, Observable, of,
+} from 'rxjs';
 import {
   debounceTime,
   filter,
@@ -19,10 +22,9 @@ import {
   take,
   tap,
 } from 'rxjs/operators';
-import { ProductType } from 'app/enums/product-type.enum';
 import { ServiceName, serviceNames } from 'app/enums/service-name.enum';
 import { ServiceStatus } from 'app/enums/service-status.enum';
-import { helptextSharingSmb, shared } from 'app/helptext/sharing';
+import { helptextSharingSmb } from 'app/helptext/sharing';
 import { Option } from 'app/interfaces/option.interface';
 import { Service } from 'app/interfaces/service.interface';
 import {
@@ -30,32 +32,33 @@ import {
   SmbPresetType,
   SmbShare,
 } from 'app/interfaces/smb-share.interface';
-import { forbiddenValues } from 'app/modules/entity/entity-form/validators/forbidden-values-validation';
+import { WebsocketError } from 'app/interfaces/websocket-error.interface';
+import { IxSlideInRef } from 'app/modules/ix-forms/components/ix-slide-in/ix-slide-in-ref';
+import { SLIDE_IN_DATA } from 'app/modules/ix-forms/components/ix-slide-in/ix-slide-in.token';
 import { FormErrorHandlerService } from 'app/modules/ix-forms/services/form-error-handler.service';
 import { IxFormatterService } from 'app/modules/ix-forms/services/ix-formatter.service';
+import { forbiddenValues } from 'app/modules/ix-forms/validators/forbidden-values-validation/forbidden-values-validation';
+import { AppLoaderService } from 'app/modules/loader/app-loader.service';
 import { SnackbarService } from 'app/modules/snackbar/services/snackbar.service';
-import { RestartSmbDialogComponent } from 'app/pages/sharing/smb/smb-form/restart-smb-dialog/restart-smb-dialog.component';
 import {
-  AppLoaderService,
-  DialogService,
-  WebSocketService,
-} from 'app/services';
+  StartServiceDialogComponent, StartServiceDialogResult,
+} from 'app/pages/sharing/components/start-service-dialog/start-service-dialog.component';
+import { RestartSmbDialogComponent } from 'app/pages/sharing/smb/smb-form/restart-smb-dialog/restart-smb-dialog.component';
+import { DialogService } from 'app/services/dialog.service';
+import { ErrorHandlerService } from 'app/services/error-handler.service';
 import { FilesystemService } from 'app/services/filesystem.service';
-import { IxSlideInService } from 'app/services/ix-slide-in.service';
+import { WebSocketService } from 'app/services/ws.service';
 
 @UntilDestroy()
 @Component({
   templateUrl: './smb-form.component.html',
-  styleUrls: ['./smb-form.component.scss'],
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class SmbFormComponent implements OnInit {
   isLoading = false;
   isAdvancedMode = false;
   namesInUse: string[] = [];
-  existingSmbShare: SmbShare;
   readonly helptextSharingSmb = helptextSharingSmb;
-  productType = localStorage.getItem('product_type') as ProductType;
   private wasStripAclWarningShown = false;
 
   title: string = helptextSharingSmb.formTitleAdd;
@@ -74,8 +77,8 @@ export class SmbFormComponent implements OnInit {
   purposeOptions$: Observable<Option[]>;
 
   get hasAddedAllowDenyHosts(): boolean {
-    const hostsallow = this.form.get('hostsallow').value;
-    const hostsdeny = this.form.get('hostsdeny').value;
+    const hostsallow = this.form.controls.hostsallow.value;
+    const hostsdeny = this.form.controls.hostsdeny.value;
     return (
       (this.isNew && hostsallow && hostsallow.length > 0)
       || (this.isNew && hostsdeny && hostsdeny.length > 0)
@@ -100,7 +103,7 @@ export class SmbFormComponent implements OnInit {
   }
 
   get isNewTimemachineShare(): boolean {
-    const timemachine = this.form.get('timemachine').value;
+    const timemachine = this.form.controls.timemachine.value;
     return (
       (this.isNew && timemachine)
       || timemachine !== this.existingSmbShare?.timemachine
@@ -108,7 +111,7 @@ export class SmbFormComponent implements OnInit {
   }
 
   get isNewHomeShare(): boolean {
-    const homeShare = this.form.get('home').value;
+    const homeShare = this.form.controls.home.value;
     return (
       (this.isNew && homeShare) || homeShare !== this.existingSmbShare?.home
     );
@@ -116,14 +119,28 @@ export class SmbFormComponent implements OnInit {
 
   get wasPathChanged(): boolean {
     return (
-      !this.isNew && this.form.get('path').value !== this.existingSmbShare?.path
+      !this.isNew && this.form.controls.path.value !== this.existingSmbShare?.path
     );
   }
+  hostsAllowTooltip = this.translate.instant('Enter a list of allowed hostnames or IP addresses.\
+    Separate entries by pressing <code>Enter</code>. A more detailed description \
+    with examples can be found \
+    <a href="{url}" target="_blank">here</a>. <br><br> \
+    If neither *Hosts Allow* or *Hosts Deny* contains \
+    an entry, then SMB share access is allowed for any host. <br><br> \
+    If there is a *Hosts Allow* list but no *Hosts Deny* list, then only allow \
+    hosts on the *Hosts Allow* list. <br><br> \
+    If there is a *Hosts Deny* list but no *Hosts Allow* list, then allow all \
+    hosts that are not on the *Hosts Deny* list. <br><br> \
+    If there is both a *Hosts Allow* and *Hosts Deny* list, then allow all hosts \
+    that are on the *Hosts Allow* list. <br><br> \
+    If there is a host not on the *Hosts Allow* and not on the *Hosts Deny* list, \
+    then allow it.', { url: 'https://wiki.samba.org/index.php/1.4_Samba_Security' });
 
   form = this.formBuilder.group({
     path: ['', Validators.required],
     name: ['', [Validators.required]],
-    purpose: [''],
+    purpose: [null as SmbPresetType],
     comment: [''],
     enabled: [true],
     acl: [false],
@@ -144,97 +161,93 @@ export class SmbFormComponent implements OnInit {
     durablehandle: [false],
     fsrvp: [false],
     path_suffix: [''],
-    auxsmbconf: [''],
   });
 
   constructor(
     public formatter: IxFormatterService,
     private cdr: ChangeDetectorRef,
-    private formBuilder: UntypedFormBuilder,
+    private formBuilder: FormBuilder,
     private ws: WebSocketService,
     private mdDialog: MatDialog,
-    private dialog: DialogService,
-    private slideInService: IxSlideInService,
+    private dialogService: DialogService,
+    private errorHandler: ErrorHandlerService,
     private translate: TranslateService,
     private router: Router,
     protected loader: AppLoaderService,
-    private errorHandler: FormErrorHandlerService,
+    private formErrorHandler: FormErrorHandlerService,
     private filesystemService: FilesystemService,
     private snackbar: SnackbarService,
-  ) {}
+    private slideInRef: IxSlideInRef<SmbFormComponent>,
+    @Inject(SLIDE_IN_DATA) private existingSmbShare: SmbShare,
+  ) { }
 
   ngOnInit(): void {
+    this.getUnusableNamesForShare();
+    this.setupPurposeControl();
+
     this.setupAndApplyPurposePresets()
       .pipe(
         tap(() => {
           this.setupAfpWarning();
           this.setupMangleWarning();
+          this.setupPathControl();
+          this.setupAclControl();
         }),
         untilDestroyed(this),
       )
       .subscribe(noop);
 
-    this.getUnusableNamesForShare();
-    this.setupPurposeControl();
-    this.setupPathControl();
-    this.setupAclControl();
+    if (this.existingSmbShare) {
+      this.setSmbShareForEdit();
+    }
   }
 
   setupAclControl(): void {
-    this.form
-      .get('acl')
+    this.form.controls.acl
       .valueChanges.pipe(debounceTime(100), untilDestroyed(this))
       .subscribe((acl) => {
-        this.checkAndShowStripAclWarning(this.form.get('path').value, acl);
+        this.checkAndShowStripAclWarning(this.form.controls.path.value, acl);
       });
   }
 
   setupMangleWarning(): void {
-    this.form
-      .get('aapl_name_mangling')
-      .valueChanges.pipe(
-        filter(
-          (value) => value !== this.existingSmbShare?.aapl_name_mangling && !this.isNew,
-        ),
-        take(1),
-        switchMap(() => this.dialog.confirm({
-          title: helptextSharingSmb.manglingDialog.title,
-          message: helptextSharingSmb.manglingDialog.message,
-          hideCheckBox: true,
-          buttonMsg: helptextSharingSmb.manglingDialog.action,
-          hideCancel: true,
-        })),
-        untilDestroyed(this),
-      )
+    this.form.controls.aapl_name_mangling.valueChanges.pipe(
+      filter(
+        (value) => value !== this.existingSmbShare?.aapl_name_mangling && !this.isNew,
+      ),
+      take(1),
+      switchMap(() => this.dialogService.confirm({
+        title: helptextSharingSmb.manglingDialog.title,
+        message: helptextSharingSmb.manglingDialog.message,
+        hideCheckbox: true,
+        buttonText: helptextSharingSmb.manglingDialog.action,
+        hideCancel: true,
+      })),
+      untilDestroyed(this),
+    )
       .subscribe();
   }
 
   setupPathControl(): void {
-    this.form
-      .get('path')
-      .valueChanges.pipe(
-        debounceTime(50),
-        tap(() => this.setNameFromPath()),
-        untilDestroyed(this),
-      )
+    this.form.controls.path.valueChanges.pipe(
+      debounceTime(50),
+      tap(() => this.setNameFromPath()),
+      untilDestroyed(this),
+    )
       .subscribe((path) => {
-        this.checkAndShowStripAclWarning(path, this.form.get('acl').value);
+        this.checkAndShowStripAclWarning(path, this.form.controls.acl.value);
       });
   }
 
   setupAfpWarning(): void {
-    this.form
-      .get('afp')
-      .valueChanges.pipe(untilDestroyed(this))
+    this.form.controls.afp.valueChanges.pipe(untilDestroyed(this))
       .subscribe((value: boolean) => {
         this.afpConfirmEnable(value);
       });
   }
 
   setupPurposeControl(): void {
-    this.form
-      .get('purpose')
-      .valueChanges.pipe(untilDestroyed(this))
+    this.form.controls.purpose.valueChanges.pipe(untilDestroyed(this))
       .subscribe((value: string) => {
         this.clearPresets();
         this.setValuesFromPreset(value);
@@ -242,12 +255,12 @@ export class SmbFormComponent implements OnInit {
   }
 
   setNameFromPath(): void {
-    const pathControl = this.form.get('path');
+    const pathControl = this.form.controls.path;
     if (!pathControl.value) {
       return;
     }
-    const nameControl = this.form.get('name');
-    if (pathControl.value && !nameControl.value) {
+    const nameControl = this.form.controls.name;
+    if (pathControl.value && (!nameControl.value || !nameControl.dirty)) {
       const name = pathControl.value.split('/').pop();
       nameControl.setValue(name);
     }
@@ -270,13 +283,14 @@ export class SmbFormComponent implements OnInit {
   }
 
   setValuesFromPreset(preset: string): void {
-    if (!this.presets[preset]) {
+    if (!this.presets?.[preset]) {
       return;
     }
     Object.keys(this.presets[preset].params).forEach((param) => {
       this.presetFields.push(param as keyof SmbShare);
+      // eslint-disable-next-line no-restricted-syntax
       const ctrl = this.form.get(param);
-      if (ctrl && param !== 'auxsmbconf') {
+      if (ctrl) {
         ctrl.setValue(this.presets[preset].params[param as keyof SmbShare]);
         ctrl.disable();
       }
@@ -284,25 +298,31 @@ export class SmbFormComponent implements OnInit {
   }
 
   /**
-   *
    * @returns Observable<void> to allow setting warnings for values changes once default or previous preset is applied
    */
   setupAndApplyPurposePresets(): Observable<void> {
     return this.ws.call('sharing.smb.presets').pipe(
       switchMap((presets) => {
-        this.presets = presets;
-        const options = Object.entries(presets).map(([presetName, preset]) => ({
+        const nonClusterPresets = Object.entries(presets).reduce(
+          (acc, [presetName, preset]) => {
+            if (!preset.cluster) {
+              acc[presetName] = preset;
+            }
+            return acc;
+          },
+          {} as SmbPresets,
+        );
+        this.presets = nonClusterPresets;
+        const options = Object.entries(nonClusterPresets).map(([presetName, preset]) => ({
           label: preset.verbose_name,
           value: presetName,
         }));
         this.purposeOptions$ = of(options);
-        this.form
-          .get('purpose')
-          .setValue(
-            this.isNew
-              ? SmbPresetType.DefaultShareParameters
-              : this.existingSmbShare?.purpose,
-          );
+        this.form.controls.purpose.setValue(
+          this.isNew
+            ? SmbPresetType.DefaultShareParameters
+            : this.existingSmbShare?.purpose,
+        );
         this.cdr.markForCheck();
         return of(null);
       }),
@@ -318,17 +338,17 @@ export class SmbFormComponent implements OnInit {
       )
       .subscribe((shareNames) => {
         this.namesInUse = ['global', ...shareNames];
-        this.form.get('name').setValidators(forbiddenValues(this.namesInUse));
+        this.form.controls.name.setValidators(forbiddenValues(this.namesInUse));
       });
   }
 
   showStripAclWarning(): void {
-    this.dialog
+    this.dialogService
       .confirm({
         title: helptextSharingSmb.stripACLDialog.title,
         message: helptextSharingSmb.stripACLDialog.message,
-        hideCheckBox: true,
-        buttonMsg: helptextSharingSmb.stripACLDialog.button,
+        hideCheckbox: true,
+        buttonText: helptextSharingSmb.stripACLDialog.button,
         hideCancel: true,
       })
       .pipe(untilDestroyed(this))
@@ -337,32 +357,32 @@ export class SmbFormComponent implements OnInit {
 
   clearPresets(): void {
     for (const item of this.presetFields) {
+      // eslint-disable-next-line no-restricted-syntax
       this.form.get(item).enable();
     }
     this.presetFields = [];
   }
 
-  setSmbShareForEdit(smbShare: SmbShare): void {
-    this.existingSmbShare = smbShare;
+  setSmbShareForEdit(): void {
     this.title = helptextSharingSmb.formTitleEdit;
-    const index = this.namesInUse.findIndex((name) => name === smbShare.name);
+    const index = this.namesInUse.findIndex((name) => name === this.existingSmbShare.name);
     if (index >= 0) {
       this.namesInUse.splice(index, 1);
     }
-    this.form.patchValue(smbShare);
+    this.form.patchValue(this.existingSmbShare);
   }
 
   afpConfirmEnable(value: boolean): void {
     if (!value) {
       return;
     }
-    const afpControl = this.form.get('afp');
-    this.dialog
+    const afpControl = this.form.controls.afp;
+    this.dialogService
       .confirm({
         title: helptextSharingSmb.afpDialog_title,
         message: helptextSharingSmb.afpDialog_message,
-        hideCheckBox: false,
-        buttonMsg: helptextSharingSmb.afpDialog_button,
+        hideCheckbox: false,
+        buttonText: helptextSharingSmb.afpDialog_button,
         hideCancel: false,
       })
       .pipe(untilDestroyed(this))
@@ -393,7 +413,7 @@ export class SmbFormComponent implements OnInit {
     request$.pipe(
       untilDestroyed(this),
     ).subscribe({
-      next: () => {
+      next: (smbShareResponse: SmbShare) => {
         this.getCifsService().pipe(
           switchMap((cifsService) => {
             if (cifsService.state === ServiceStatus.Stopped) {
@@ -408,32 +428,41 @@ export class SmbFormComponent implements OnInit {
             this.isLoading = false;
             this.cdr.markForCheck();
             if (redirect) {
-              const sharePath = this.form.get('path').value;
-              const homeShare = this.form.get('home').value;
-              const datasetId = sharePath.replace('/mnt/', '');
-              this.router.navigate(
-                ['/', 'datasets', datasetId, 'permissions', 'acl'],
-                { queryParams: { homeShare } },
-              );
-            }
-            this.slideInService.close();
-          },
-          error: (err) => {
-            if (err.reason.includes('[ENOENT]')) {
-              this.dialog.closeAllDialogs();
+              this.dialogService.confirm({
+                title: this.translate.instant('Configure ACL'),
+                message: this.translate.instant('Do you want to configure the ACL?'),
+                buttonText: this.translate.instant('Configure'),
+                hideCheckbox: true,
+              }).pipe(untilDestroyed(this)).subscribe((isConfigure) => {
+                if (isConfigure) {
+                  const homeShare = this.form.controls.home.value;
+                  this.router.navigate(
+                    ['/', 'datasets', 'acl', 'edit'],
+                    { queryParams: { homeShare, path: smbShareResponse.path_local } },
+                  );
+                }
+                this.slideInRef.close();
+              });
             } else {
-              this.dialog.errorReport(err.error, err.reason, err.trace.formatted);
+              this.slideInRef.close();
+            }
+          },
+          error: (err: WebsocketError) => {
+            if (err.reason.includes('[ENOENT]') || err.reason.includes('[EXDEV]')) {
+              this.dialogService.closeAllDialogs();
+            } else {
+              this.dialogService.error(this.errorHandler.parseWsError(err));
             }
             this.isLoading = false;
             this.cdr.markForCheck();
-            this.slideInService.close();
+            this.slideInRef.close();
           },
         });
       },
       error: (error) => {
         this.isLoading = false;
         this.cdr.markForCheck();
-        this.errorHandler.handleWsFormError(error, this.form);
+        this.formErrorHandler.handleWsFormError(error, this.form);
       },
     });
   }
@@ -480,69 +509,57 @@ export class SmbFormComponent implements OnInit {
   };
 
   shouldRedirectToAclEdit(): Observable<boolean> {
-    const sharePath: string = this.form.get('path').value;
+    const sharePath: string = this.form.controls.path.value;
     const datasetId = sharePath.replace('/mnt/', '');
     return this.ws.call('filesystem.stat', [sharePath]).pipe(
       switchMap((stat) => {
         return of(
-          stat.acl !== this.form.get('acl').value && datasetId.includes('/'),
+          stat.acl !== this.form.controls.acl.value && datasetId.includes('/'),
         );
       }),
     );
   }
 
-  startAndEnableService = (cifsService: Service): Observable<boolean> => {
-    const dialog = this.dialog.confirm({
-      title: this.translate.instant('Start {service} Service', {
-        service: serviceNames.get(ServiceName.Cifs),
-      }),
-      message: this.translate.instant(
-        'SMB Service is not currently running. Start the service now?',
-      ),
-      hideCheckBox: true,
-      secondaryCheckBox: true,
-      secondaryCheckBoxMsg: shared.dialog_message,
-      buttonMsg: shared.dialog_button,
-    });
-    let restartAutomatically = false;
-    let startNow = false;
-    dialog.componentInstance.isSubmitEnabled = true;
-    dialog.componentInstance.switchSelectionEmitter
-      .pipe(untilDestroyed(this))
-      .subscribe((restart) => (restartAutomatically = restart));
-    dialog.componentInstance.customSubmit = () => {
-      startNow = true;
-      dialog.close();
-    };
-    return dialog.afterClosed().pipe(
-      switchMap(() => {
-        if (startNow && restartAutomatically) {
-          return this.ws.call('service.update', [
-            cifsService.id,
-            { enable: restartAutomatically },
-          ]);
-        }
-        return of({});
-      }),
-      switchMap(() => (startNow
-        ? this.ws.call('service.start', [
-          cifsService.service,
-          { silent: false },
-        ])
-        : of({}))),
-      tap(() => {
-        if (!startNow) {
-          return;
-        }
+  startAndEnableService = (cifsService: Service): Observable<unknown> => {
+    return this.mdDialog.open(StartServiceDialogComponent, {
+      data: serviceNames.get(ServiceName.Cifs),
+      disableClose: true,
+    })
+      .afterClosed()
+      .pipe(
+        switchMap((result: StartServiceDialogResult) => {
+          const requests: Observable<unknown>[] = [];
 
-        this.snackbar.success(
-          this.translate.instant('The {service} service has been started.', {
-            service: 'SMB',
-          }),
-        );
-      }),
-      switchMap(() => of(startNow)),
-    );
+          if (result.start && result.startAutomatically) {
+            requests.push(
+              this.ws.call('service.update', [
+                cifsService.id,
+                { enable: result.startAutomatically },
+              ]),
+            );
+          }
+
+          if (result.start) {
+            requests.push(
+              this.ws.call('service.start', [
+                cifsService.service,
+                { silent: false },
+              ])
+                .pipe(
+                  tap(() => {
+                    this.snackbar.success(
+                      this.translate.instant('The {service} service has started.', {
+                        service: 'SMB',
+                      }),
+                    );
+                  }),
+                ),
+            );
+          }
+
+          return requests.length ? forkJoin(requests) : of(requests);
+        }),
+      );
   };
 
   getCifsService = (): Observable<Service> => {

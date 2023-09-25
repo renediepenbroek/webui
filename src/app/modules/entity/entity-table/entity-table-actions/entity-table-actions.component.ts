@@ -10,7 +10,7 @@ import { EntityTableAction } from 'app/modules/entity/entity-table/entity-table.
   templateUrl: './entity-table-actions.component.html',
 })
 export class EntityTableActionsComponent implements OnInit, OnChanges {
-  @Input() entity: EntityTableComponent;
+  @Input() entity: EntityTableComponent<Record<string, unknown>>;
   @Input() row: Record<string, unknown>;
   @Input() iconName = 'more_vert';
   @Input() action: string;
@@ -21,8 +21,8 @@ export class EntityTableActionsComponent implements OnInit, OnChanges {
   keyProp: string;
 
   get isSingleAction(): boolean {
-    if (!this.actions) return;
-    const hasGroups = Boolean(this.actions && this.actions[0].actionName);
+    if (!this.actions) return false;
+    const hasGroups = Boolean(this.actions?.[0]?.actionName);
 
     if (hasGroups) {
       return (this.actions[0].actions?.length === 1);
@@ -34,16 +34,16 @@ export class EntityTableActionsComponent implements OnInit, OnChanges {
     return this.entity.conf.inlineActions || false;
   }
 
+  ngOnChanges(): void {
+    this.getActions();
+  }
+
   ngOnInit(): void {
-    if (this.entity.conf.config && this.entity.conf.config.deleteMsg) {
+    if (this.entity.conf.config?.deleteMsg) {
       this.keyProp = this.entity.conf.config.deleteMsg.key_props[0];
     } else if (this.entity.filterColumns) {
       this.keyProp = this.entity.filterColumns[0].prop;
     }
-    this.getActions();
-  }
-
-  ngOnChanges(): void {
     this.getActions();
   }
 

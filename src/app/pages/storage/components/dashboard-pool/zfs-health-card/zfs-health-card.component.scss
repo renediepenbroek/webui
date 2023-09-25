@@ -1,5 +1,5 @@
-@import '~assets/styles/mixins/cards';
-@import '~assets/styles/mixins/animations';
+@import 'mixins/cards';
+@import 'mixins/animations';
 
 :host {
   display: flex;
@@ -18,22 +18,9 @@
   }
 }
 
-.pool-icon {
-  &.icon-online {
-    color: var(--green);
-  }
-
-  &.icon-warning {
-    color: var(--orange);
-  }
-
-  &.icon-faulted {
-    color: var(--blue);
-  }
-
-  &.icon-error {
-    color: var(--red);
-  }
+.controls {
+  column-gap: 8px;
+  display: flex;
 }
 
 .scan-in-progress {

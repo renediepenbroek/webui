@@ -1,9 +1,6 @@
-<mat-card class="card">
-  <mat-progress-bar
-    *ngIf="isFormLoading"
-    mode="indeterminate"
-  ></mat-progress-bar>
+<ix-modal-header [title]="'UPS' | translate" [loading]="isFormLoading"></ix-modal-header>
 
+<mat-card class="card">
   <mat-card-content>
     <form class="ix-form-container" [formGroup]="form" (submit)="onSubmit()">
       <div class="two-columns">
@@ -54,6 +51,7 @@
             [tooltip]="tooltips.port | translate"
             [provider]="providers.port"
             [required]="isMasterMode"
+            [allowCustomValue]="true"
           ></ix-combobox>
         </ix-fieldset>
 
@@ -158,13 +156,10 @@
           mat-button
           type="submit"
           color="primary"
+          ixTest="save"
           [disabled]="form.invalid || isFormLoading"
         >
           {{ 'Save' | translate }}
-        </button>
-
-        <button mat-button color="accent" (click)="onCancel()">
-          {{ 'Cancel' | translate }}
         </button>
       </div>
     </form>

@@ -9,11 +9,12 @@ import { VirtualMachine } from 'app/interfaces/virtual-machine.interface';
 import { IxCheckboxHarness } from 'app/modules/ix-forms/components/ix-checkbox/ix-checkbox.harness';
 import { IxFormsModule } from 'app/modules/ix-forms/ix-forms.module';
 import { StopVmDialogComponent } from 'app/pages/vm/vm-list/stop-vm-dialog/stop-vm-dialog.component';
-import { DialogService } from 'app/services';
+import { DialogService } from 'app/services/dialog.service';
 
 describe('StopVmDialogComponent', () => {
   let spectator: Spectator<StopVmDialogComponent>;
   let loader: HarnessLoader;
+
   const createComponent = createComponentFactory({
     component: StopVmDialogComponent,
     imports: [
@@ -48,14 +49,6 @@ describe('StopVmDialogComponent', () => {
     const stopButton = await loader.getHarness(MatButtonHarness.with({ text: 'Stop' }));
     await stopButton.click();
 
-    expect(spectator.inject(MatDialog).open).toHaveBeenCalled();
-    expect(mockEntityJobComponentRef.componentInstance.setCall).toHaveBeenCalledWith(
-      'vm.stop',
-      [1, { force: false, force_after_timeout: true }],
-    );
-    expect(mockEntityJobComponentRef.componentInstance.submit).toHaveBeenCalled();
-
-    expect(spectator.inject(MatDialogRef).close).toHaveBeenCalledWith(true);
-    expect(spectator.inject(DialogService).info).toHaveBeenCalled();
+    expect(spectator.inject(MatDialogRef).close).toHaveBeenCalledWith({ wasStopped: true, forceAfterTimeout: true });
   });
 });

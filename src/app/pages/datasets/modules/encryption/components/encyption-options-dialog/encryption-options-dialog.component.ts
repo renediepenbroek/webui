@@ -2,25 +2,29 @@ import {
   ChangeDetectionStrategy, Component, Inject, OnInit,
 } from '@angular/core';
 import { Validators } from '@angular/forms';
-import { MAT_DIALOG_DATA, MatDialogRef } from '@angular/material/dialog';
+import { MAT_DIALOG_DATA, MatDialogRef, MatDialog } from '@angular/material/dialog';
 import { FormBuilder } from '@ngneat/reactive-forms';
 import { UntilDestroy, untilDestroyed } from '@ngneat/until-destroy';
 import { TranslateService } from '@ngx-translate/core';
 import { of, Subscription } from 'rxjs';
 import { map } from 'rxjs/operators';
 import { DatasetEncryptionType } from 'app/enums/dataset.enum';
-import { combineLatestIsAny } from 'app/helpers/combine-latest-is-any.helper';
+import { combineLatestIsAny } from 'app/helpers/operators/combine-latest-is-any.helper';
 import dataset_helptext from 'app/helptext/storage/volumes/datasets/dataset-form';
 import { DatasetChangeKeyParams } from 'app/interfaces/dataset-change-key.interface';
 import { Dataset } from 'app/interfaces/dataset.interface';
 import { WebsocketError } from 'app/interfaces/websocket-error.interface';
-import { matchOtherValidator } from 'app/modules/entity/entity-form/validators/password-validation/password-validation';
+import { EntityJobComponent } from 'app/modules/entity/entity-job/entity-job.component';
 import { FormErrorHandlerService } from 'app/modules/ix-forms/services/form-error-handler.service';
 import { IxValidatorsService } from 'app/modules/ix-forms/services/ix-validators.service';
+import { matchOthersFgValidator } from 'app/modules/ix-forms/validators/password-validation/password-validation';
 import { findInTree } from 'app/modules/ix-tree/utils/find-in-tree.utils';
+import { AppLoaderService } from 'app/modules/loader/app-loader.service';
 import { SnackbarService } from 'app/modules/snackbar/services/snackbar.service';
 import { isPasswordEncrypted, isEncryptionRoot } from 'app/pages/datasets/utils/dataset.utils';
-import { AppLoaderService, DialogService, WebSocketService } from 'app/services';
+import { DialogService } from 'app/services/dialog.service';
+import { ErrorHandlerService } from 'app/services/error-handler.service';
+import { WebSocketService } from 'app/services/ws.service';
 import { EncryptionOptionsDialogData } from './encryption-options-dialog-data.interface';
 
 enum EncryptionType {
@@ -43,13 +47,18 @@ export class EncryptionOptionsDialogComponent implements OnInit {
     generate_key: [false],
     key: ['', [Validators.required, Validators.minLength(64), Validators.maxLength(64)]],
     passphrase: ['', Validators.minLength(8)],
-    confirm_passphrase: ['', this.validatorsService.withMessage(
-      matchOtherValidator('passphrase'),
-      this.translate.instant('Passphrase and confirmation should match.'),
-    )],
+    confirm_passphrase: [''],
     pbkdf2iters: [350000, Validators.min(100000)],
     algorithm: [''],
     confirm: [false, [Validators.requiredTrue]],
+  }, {
+    validators: [
+      matchOthersFgValidator(
+        'confirm_passphrase',
+        ['passphrase'],
+        this.translate.instant('Passphrase and confirmation should match.'),
+      ),
+    ],
   });
 
   subscriptions: Subscription[] = [];
@@ -76,8 +85,10 @@ export class EncryptionOptionsDialogComponent implements OnInit {
     private dialog: DialogService,
     private dialogRef: MatDialogRef<EncryptionOptionsDialogComponent>,
     private validatorsService: IxValidatorsService,
-    private errorHandler: FormErrorHandlerService,
+    private formErrorHandler: FormErrorHandlerService,
+    private errorHandler: ErrorHandlerService,
     private snackbar: SnackbarService,
+    private mdDialog: MatDialog,
     @Inject(MAT_DIALOG_DATA) public data: EncryptionOptionsDialogData,
   ) {}
 
@@ -119,18 +130,15 @@ export class EncryptionOptionsDialogComponent implements OnInit {
   }
 
   private setToInherit(): void {
-    this.loader.open();
     this.ws.call('pool.dataset.inherit_parent_encryption_properties', [this.data.dataset.id])
-      .pipe(untilDestroyed(this))
+      .pipe(this.loader.withLoader(), untilDestroyed(this))
       .subscribe({
         next: () => {
-          this.loader.close();
           this.showSuccessDialog();
           this.dialogRef.close(true);
         },
         error: (error: WebsocketError) => {
-          this.loader.close();
-          this.errorHandler.handleWsFormError(error, this.form);
+          this.formErrorHandler.handleWsFormError(error, this.form);
         },
       });
   }
@@ -149,20 +157,28 @@ export class EncryptionOptionsDialogComponent implements OnInit {
       body.pbkdf2iters = Number(values.pbkdf2iters);
     }
 
-    this.loader.open();
-    this.ws.call('pool.dataset.change_key', [this.data.dataset.id, body])
-      .pipe(untilDestroyed(this))
-      .subscribe({
-        next: () => {
-          this.loader.close();
-          this.showSuccessDialog();
-          this.dialogRef.close(true);
-        },
-        error: (error: WebsocketError) => {
-          this.loader.close();
-          this.errorHandler.handleWsFormError(error, this.form);
-        },
-      });
+    const jobDialogRef = this.mdDialog.open(EntityJobComponent, {
+      data: {
+        title: this.translate.instant('Updating key type'),
+      },
+    });
+    jobDialogRef.componentInstance.setCall('pool.dataset.change_key', [this.data.dataset.id, body]);
+    jobDialogRef.componentInstance.success.pipe(untilDestroyed(this)).subscribe({
+      next: () => {
+        jobDialogRef.close();
+        this.showSuccessDialog();
+        this.dialogRef.close(true);
+      },
+      error: (error: WebsocketError) => {
+        this.formErrorHandler.handleWsFormError(error, this.form);
+      },
+    });
+    jobDialogRef.componentInstance.failure.pipe(untilDestroyed(this)).subscribe({
+      next: (error) => {
+        this.formErrorHandler.handleWsFormError(error, this.form);
+      },
+    });
+    jobDialogRef.componentInstance.submit();
   }
 
   private showSuccessDialog(): void {
@@ -170,13 +186,10 @@ export class EncryptionOptionsDialogComponent implements OnInit {
   }
 
   private loadPbkdf2iters(): void {
-    this.loader.open();
-
     this.ws.call('pool.dataset.query', [[['id', '=', this.data.dataset.id]]])
-      .pipe(untilDestroyed(this))
+      .pipe(this.loader.withLoader(), untilDestroyed(this))
       .subscribe({
         next: (datasets: Dataset[]) => {
-          this.loader.close();
           const pbkdf2iters = datasets[0].pbkdf2iters;
 
           if (!pbkdf2iters || pbkdf2iters.rawvalue === '0') {
@@ -188,8 +201,7 @@ export class EncryptionOptionsDialogComponent implements OnInit {
           });
         },
         error: (error: WebsocketError) => {
-          this.loader.close();
-          this.dialog.errorReportMiddleware(error);
+          this.dialog.error(this.errorHandler.parseWsError(error));
         },
       });
   }
@@ -215,11 +227,11 @@ export class EncryptionOptionsDialogComponent implements OnInit {
     this.form.controls.algorithm.disable();
 
     if (this.hasPassphraseParent || this.hasKeyChild) {
-      this.form.controls['encryption_type'].disable();
+      this.form.controls.encryption_type.disable();
     }
 
     this.subscriptions.push(
-      this.form.controls['key'].disabledWhile(combineLatestIsAny([
+      this.form.controls.key.disabledWhile(combineLatestIsAny([
         this.isSetToGenerateKey$,
         this.isKey$.pipe(map((value) => !value)),
         this.isInheriting$,
@@ -228,9 +240,9 @@ export class EncryptionOptionsDialogComponent implements OnInit {
 
     const arePassphraseFieldsDisabled$ = combineLatestIsAny([this.isKey$, this.isInheriting$]);
     this.subscriptions.push(
-      this.form.controls['passphrase'].disabledWhile(arePassphraseFieldsDisabled$),
-      this.form.controls['confirm_passphrase'].disabledWhile(arePassphraseFieldsDisabled$),
-      this.form.controls['pbkdf2iters'].disabledWhile(arePassphraseFieldsDisabled$),
+      this.form.controls.passphrase.disabledWhile(arePassphraseFieldsDisabled$),
+      this.form.controls.confirm_passphrase.disabledWhile(arePassphraseFieldsDisabled$),
+      this.form.controls.pbkdf2iters.disabledWhile(arePassphraseFieldsDisabled$),
     );
   }
 }

@@ -1,26 +1,28 @@
-import { ChangeDetectionStrategy, ChangeDetectorRef, Component } from '@angular/core';
+import {
+  ChangeDetectionStrategy, ChangeDetectorRef, Component, Inject, OnInit,
+} from '@angular/core';
 import { FormBuilder, Validators } from '@angular/forms';
 import { UntilDestroy, untilDestroyed } from '@ngneat/until-destroy';
 import { TranslateService } from '@ngx-translate/core';
 import { Observable } from 'rxjs';
 import { helptextSharingIscsi } from 'app/helptext/sharing';
 import { IscsiAuthAccess, IscsiAuthAccessUpdate } from 'app/interfaces/iscsi.interface';
-import {
-  doesNotEqualValidator,
-  matchOtherValidator,
-} from 'app/modules/entity/entity-form/validators/password-validation/password-validation';
+import { IxSlideInRef } from 'app/modules/ix-forms/components/ix-slide-in/ix-slide-in-ref';
+import { SLIDE_IN_DATA } from 'app/modules/ix-forms/components/ix-slide-in/ix-slide-in.token';
 import { FormErrorHandlerService } from 'app/modules/ix-forms/services/form-error-handler.service';
 import { IxValidatorsService } from 'app/modules/ix-forms/services/ix-validators.service';
-import { WebSocketService } from 'app/services';
-import { IxSlideInService } from 'app/services/ix-slide-in.service';
+import {
+  doesNotEqualFgValidator,
+  matchOthersFgValidator,
+} from 'app/modules/ix-forms/validators/password-validation/password-validation';
+import { WebSocketService } from 'app/services/ws.service';
 
 @UntilDestroy()
 @Component({
   templateUrl: './authorized-access-form.component.html',
-  styleUrls: ['./authorized-access-form.component.scss'],
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
-export class AuthorizedAccessFormComponent {
+export class AuthorizedAccessFormComponent implements OnInit {
   get isNew(): boolean {
     return !this.editingAccess;
   }
@@ -38,10 +40,6 @@ export class AuthorizedAccessFormComponent {
       Validators.minLength(12),
       Validators.maxLength(16),
       Validators.required,
-      this.validatorService.withMessage(
-        matchOtherValidator('secret_confirm'),
-        this.translate.instant('Secret and confirmation should match.'),
-      ),
     ]],
     secret_confirm: ['', Validators.required],
     peeruser: [''],
@@ -52,16 +50,26 @@ export class AuthorizedAccessFormComponent {
       ),
       Validators.minLength(12),
       Validators.maxLength(16),
-      this.validatorService.withMessage(
-        doesNotEqualValidator('secret'),
-        this.translate.instant('Secret and Peer Secret can not be the same.'),
-      ),
-      this.validatorService.withMessage(
-        matchOtherValidator('peersecret_confirm'),
-        this.translate.instant('Secret and confirmation should match.'),
-      ),
     ]],
     peersecret_confirm: [''],
+  }, {
+    validators: [
+      matchOthersFgValidator(
+        'secret',
+        ['secret_confirm'],
+        this.translate.instant('Secret and confirmation should match.'),
+      ),
+      matchOthersFgValidator(
+        'peersecret',
+        ['peersecret_confirm'],
+        this.translate.instant('Secret and confirmation should match.'),
+      ),
+      doesNotEqualFgValidator(
+        'peersecret',
+        ['secret'],
+        this.translate.instant('Secret and Peer Secret can not be the same.'),
+      ),
+    ],
   });
 
   isLoading = false;
@@ -74,31 +82,35 @@ export class AuthorizedAccessFormComponent {
     peersecret: helptextSharingIscsi.authaccess_tooltip_peersecret,
   };
 
-  private editingAccess: IscsiAuthAccess;
-
   constructor(
     private translate: TranslateService,
     private formBuilder: FormBuilder,
-    private slideInService: IxSlideInService,
     private errorHandler: FormErrorHandlerService,
     private cdr: ChangeDetectorRef,
     private ws: WebSocketService,
     private validatorService: IxValidatorsService,
+    private slideInRef: IxSlideInRef<AuthorizedAccessFormComponent>,
+    @Inject(SLIDE_IN_DATA) private editingAccess: IscsiAuthAccess,
   ) {}
+
+  ngOnInit(): void {
+    if (this.editingAccess) {
+      this.setAccessForEdit();
+    }
+  }
 
   isPeerUserSet(): boolean {
     return Boolean(this.form?.value?.peeruser);
   }
 
-  setAccessForEdit(access: IscsiAuthAccess): void {
-    this.editingAccess = access;
-    this.form.patchValue(access);
+  setAccessForEdit(): void {
+    this.form.patchValue(this.editingAccess);
   }
 
   onSubmit(): void {
     const values = this.form.value;
-    delete values['secret_confirm'];
-    delete values['peersecret_confirm'];
+    delete values.secret_confirm;
+    delete values.peersecret_confirm;
 
     this.isLoading = true;
     let request$: Observable<unknown>;
@@ -114,7 +126,7 @@ export class AuthorizedAccessFormComponent {
     request$.pipe(untilDestroyed(this)).subscribe({
       next: () => {
         this.isLoading = false;
-        this.slideInService.close();
+        this.slideInRef.close();
       },
       error: (error) => {
         this.isLoading = false;

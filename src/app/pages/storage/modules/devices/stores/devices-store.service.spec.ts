@@ -2,10 +2,11 @@ import { createServiceFactory, SpectatorService } from '@ngneat/spectator';
 import { mockProvider } from '@ngneat/spectator/jest';
 import { firstValueFrom } from 'rxjs';
 import { TestScheduler } from 'rxjs/testing';
+import { getTestScheduler } from 'app/core/testing/utils/get-test-scheduler.utils';
 import { Pool } from 'app/interfaces/pool.interface';
 import { Disk } from 'app/interfaces/storage.interface';
 import { DevicesState, DevicesStore } from 'app/pages/storage/modules/devices/stores/devices-store.service';
-import { WebSocketService } from 'app/services';
+import { WebSocketService } from 'app/services/ws.service';
 
 describe('DevicesStore', () => {
   let spectator: SpectatorService<DevicesStore>;
@@ -19,9 +20,7 @@ describe('DevicesStore', () => {
 
   beforeEach(() => {
     spectator = createService();
-    testScheduler = new TestScheduler((actual, expected) => {
-      expect(actual).toEqual(expected);
-    });
+    testScheduler = getTestScheduler();
   });
 
   it('loads pool topology, disks and sets loading indicators when loadNodes is called', () => {
@@ -51,6 +50,8 @@ describe('DevicesStore', () => {
         if (method === 'disk.query') {
           return cold('-b|', { b: [{ devname: 'sdr' }] as Disk[] });
         }
+
+        throw new Error(`Unexpected method: ${method}`);
       });
 
       spectator.service.loadNodes(4);

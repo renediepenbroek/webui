@@ -2,15 +2,15 @@ import { Injectable } from '@angular/core';
 import { ComponentStore } from '@ngrx/component-store';
 import { TranslateService } from '@ngx-translate/core';
 import _ from 'lodash';
-import { EMPTY, Observable } from 'rxjs';
+import { EMPTY, Observable, of } from 'rxjs';
 import { catchError, switchMap, tap } from 'rxjs/operators';
-import { PoolTopologyCategory } from 'app/enums/pool-topology-category.enum';
+import { VdevType } from 'app/enums/v-dev-type.enum';
 import { DeviceNestedDataNode, VDevGroup } from 'app/interfaces/device-nested-data-node.interface';
 import { PoolTopology } from 'app/interfaces/pool.interface';
 import { Disk } from 'app/interfaces/storage.interface';
 import { WebsocketError } from 'app/interfaces/websocket-error.interface';
 import { getTreeBranchToNode } from 'app/pages/datasets/utils/get-tree-branch-to-node.utils';
-import { WebSocketService } from 'app/services';
+import { WebSocketService } from 'app/services/ws.service';
 
 export interface DevicesState {
   isLoading: boolean;
@@ -33,7 +33,6 @@ const initialState: DevicesState = {
 @Injectable()
 export class DevicesStore extends ComponentStore<DevicesState> {
   readonly isLoading$ = this.select((state) => state.isLoading);
-  // TODO
   readonly error$ = this.select((state) => state.error);
   readonly nodes$ = this.select((state) => state.nodes);
   readonly diskDictionary$ = this.select((state) => state.diskDictionary);
@@ -77,7 +76,9 @@ export class DevicesStore extends ComponentStore<DevicesState> {
       switchMap((poolId) => {
         return this.ws.call('pool.query', [[['id', '=', poolId]]]).pipe(
           switchMap((pools) => {
-            // TODO: Handle pool not found.
+            if (!pools?.length) {
+              return of([]);
+            }
             return this.ws.call('disk.query', [[['pool', '=', pools[0].name]], { extra: { pools: true } }]).pipe(
               tap((disks) => {
                 this.patchState({
@@ -87,7 +88,7 @@ export class DevicesStore extends ComponentStore<DevicesState> {
                   nodes: this.createDataNodes(pools[0].topology),
                 });
               }),
-              catchError((error) => {
+              catchError((error: WebsocketError) => {
                 this.patchState({
                   isLoading: false,
                   error,
@@ -131,42 +132,42 @@ export class DevicesStore extends ComponentStore<DevicesState> {
       dataNodes.push({
         children: topology.data,
         group: this.translate.instant('Data VDEVs'),
-        guid: PoolTopologyCategory.Data,
+        guid: VdevType.Data,
       });
     }
     if (topology.cache.length) {
       dataNodes.push({
         children: topology.cache,
         group: this.translate.instant('Cache'),
-        guid: PoolTopologyCategory.Cache,
+        guid: VdevType.Cache,
       });
     }
     if (topology.log.length) {
       dataNodes.push({
         children: topology.log,
         group: this.translate.instant('Log'),
-        guid: PoolTopologyCategory.Log,
+        guid: VdevType.Log,
       });
     }
     if (topology.spare.length) {
       dataNodes.push({
         children: topology.spare,
         group: this.translate.instant('Spare'),
-        guid: PoolTopologyCategory.Spare,
+        guid: VdevType.Spare,
       });
     }
     if (topology.special.length) {
       dataNodes.push({
         children: topology.special,
         group: this.translate.instant('Metadata'),
-        guid: PoolTopologyCategory.Special,
+        guid: VdevType.Special,
       });
     }
     if (topology.dedup.length) {
       dataNodes.push({
         children: topology.dedup,
         group: this.translate.instant('Dedup'),
-        guid: PoolTopologyCategory.Dedup,
+        guid: VdevType.Dedup,
       });
     }
     return dataNodes;

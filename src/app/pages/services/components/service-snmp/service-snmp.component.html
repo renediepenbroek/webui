@@ -1,10 +1,7 @@
+<ix-modal-header [title]="'SNMP' | translate" [loading]="isFormLoading"></ix-modal-header>
+
 <mat-card class="card">
   <mat-card-content>
-    <mat-progress-bar
-      *ngIf="isFormLoading"
-      mode="indeterminate"
-    ></mat-progress-bar>
-
     <form class="ix-form-container" [formGroup]="form" (submit)="onSubmit()">
       <div class="columns">
         <ix-fieldset [title]="'General Options' | translate">
@@ -85,7 +82,6 @@
         <ix-checkbox
           formControlName="zilstat"
           [label]="'Expose zilstat via SNMP' | translate"
-          [tooltip]="tooltips.zilstat | translate"
         ></ix-checkbox>
 
         <ix-select
@@ -101,14 +97,11 @@
           mat-button
           type="submit"
           color="primary"
+          ixTest="save"
           [disabled]="form.invalid || isFormLoading"
         >
           {{ 'Save' | translate }}
         </button>
-
-        <a mat-button type="button" [routerLink]="['/services']">
-          {{ 'Cancel' | translate }}
-        </a>
       </div>
     </form>
   </mat-card-content>

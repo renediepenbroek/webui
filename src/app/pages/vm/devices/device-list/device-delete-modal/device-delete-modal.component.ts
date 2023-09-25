@@ -1,13 +1,17 @@
-import { Component, Inject, OnInit } from '@angular/core';
-import { AbstractControl, UntypedFormBuilder, Validators } from '@angular/forms';
+import {
+  ChangeDetectionStrategy, Component, Inject, OnInit,
+} from '@angular/core';
+import { AbstractControl, FormBuilder, Validators } from '@angular/forms';
 import { MatDialogRef, MAT_DIALOG_DATA } from '@angular/material/dialog';
 import { UntilDestroy, untilDestroyed } from '@ngneat/until-destroy';
 import { TranslateService } from '@ngx-translate/core';
 import { VmDeviceType } from 'app/enums/vm.enum';
 import { VmDevice, VmDeviceDelete, VmDiskDevice } from 'app/interfaces/vm-device.interface';
-import { EntityUtils } from 'app/modules/entity/utils';
 import { IxValidatorsService } from 'app/modules/ix-forms/services/ix-validators.service';
-import { AppLoaderService, DialogService, WebSocketService } from 'app/services';
+import { AppLoaderService } from 'app/modules/loader/app-loader.service';
+import { DialogService } from 'app/services/dialog.service';
+import { ErrorHandlerService } from 'app/services/error-handler.service';
+import { WebSocketService } from 'app/services/ws.service';
 
 export interface DeviceDeleteModalState {
   row: VmDevice;
@@ -17,6 +21,7 @@ export interface DeviceDeleteModalState {
 @Component({
   styleUrls: ['./device-delete-modal.component.scss'],
   templateUrl: './device-delete-modal.component.html',
+  changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class DeviceDeleteModalComponent implements OnInit {
   readonly VmDeviceType = VmDeviceType;
@@ -33,8 +38,9 @@ export class DeviceDeleteModalComponent implements OnInit {
   constructor(
     private loader: AppLoaderService,
     @Inject(MAT_DIALOG_DATA) public data: DeviceDeleteModalState,
-    private fb: UntypedFormBuilder,
+    private fb: FormBuilder,
     private dialogRef: MatDialogRef<DeviceDeleteModalComponent>,
+    private errorHandler: ErrorHandlerService,
     private dialogService: DialogService,
     private translate: TranslateService,
     private validatorsService: IxValidatorsService,
@@ -56,7 +62,7 @@ export class DeviceDeleteModalComponent implements OnInit {
       this.translate.instant('Name of the zvol must be correct'),
     );
 
-    this.form.controls['zvolConfirm'].setValidators([
+    this.form.controls.zvolConfirm.setValidators([
       this.validatorsService.validateOnCondition(
         (control: AbstractControl) => control.parent.get('zvol').value,
         Validators.compose([
@@ -72,7 +78,7 @@ export class DeviceDeleteModalComponent implements OnInit {
   }
 
   ngOnInit(): void {
-    this.form.controls['zvol'].valueChanges.pipe(untilDestroyed(this)).subscribe(
+    this.form.controls.zvol.valueChanges.pipe(untilDestroyed(this)).subscribe(
       ($event) => this.onDestroyCheckedStateChanged($event),
     );
   }
@@ -83,7 +89,6 @@ export class DeviceDeleteModalComponent implements OnInit {
 
   onSubmit(): void {
     const value = this.form.value as VmDeviceDelete;
-    this.loader.open();
     this.ws.call('vm.device.delete', [
       this.data.row.id,
       {
@@ -92,16 +97,13 @@ export class DeviceDeleteModalComponent implements OnInit {
         force: value.force,
       },
     ])
-      .pipe(untilDestroyed(this))
-      .subscribe({
-        next: () => {
-          this.dialogRef.close(true);
-          this.loader.close();
-        },
-        error: (err) => {
-          new EntityUtils().handleWsError(this, err, this.dialogService);
-          this.loader.close();
-        },
+      .pipe(
+        this.loader.withLoader(),
+        this.errorHandler.catchError(),
+        untilDestroyed(this),
+      )
+      .subscribe(() => {
+        this.dialogRef.close(true);
       });
   }
 
@@ -112,8 +114,8 @@ export class DeviceDeleteModalComponent implements OnInit {
   }
 
   private resetZvolConfirmValidState(): void {
-    this.form.get('zvolConfirm').reset();
-    this.form.get('zvolConfirm').setErrors(null);
+    this.form.controls.zvolConfirm.reset();
+    this.form.controls.zvolConfirm.setErrors(null);
   }
 
   private getZvolName(disk: VmDiskDevice): string {
