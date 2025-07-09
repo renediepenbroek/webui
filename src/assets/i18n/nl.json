@@ -1,6 +1,6 @@
 {
   "": "",
-  "\"{source}\" is selected as the primary boot disk.": "",
+  "\"{source}\" is selected as the primary boot disk.": "\"{source}\" is geselecteerd als primaire opstartschijf.",
   "{count, plural, one {# Cloud Sync Task} other {# Cloud Sync Tasks}}": "",
   "{count, plural, one {# Replication Task} other {# Replication Tasks}}": "",
   "{count, plural, one {# Rsync Task} other {# Rsync Tasks}}": "",
